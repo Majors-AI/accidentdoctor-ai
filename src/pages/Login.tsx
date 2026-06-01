@@ -23,11 +23,12 @@ export default function Login() {
         <p className="muted small" style={{marginTop:0}}>Personal-injury case management.</p>
 
         {!hasSupabase && <div className="banner">
-          Supabase isn’t connected yet. Add <code>VITE_SUPABASE_URL</code> and
-          <code> VITE_SUPABASE_ANON_KEY</code> (Bolt → Connect Supabase), then run the seed.
+          Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to your
+          .env file (Supabase → Settings → API), then run the seed.
         </div>}
         {hasSupabase && <div className="banner">
-          Seeded logins (password <b>TestPass123!</b>): attorney@accidentdoctor.ai · staff@accidentdoctor.ai · client1@example.com
+          Seeded logins (password <b>TestPass123!</b>):
+          provider@ · frontdesk@ · billing@ · admin@ · super@ accidentdoctor.ai
         </div>}
 
         <label>Email</label>
