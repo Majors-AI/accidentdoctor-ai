@@ -21,14 +21,26 @@ const USERS = [
 async function ensureUser(u) {
   const { data: { users } } = await db.auth.admin.listUsers({ perPage: 1000 });
   const hit = users.find(x => x.email === u.email);
-  if (hit) { console.log(`  ${u.role.padEnd(16)} ${u.email} (exists)`); return hit.id; }
-  const { data, error } = await db.auth.admin.createUser({
-    email: u.email, password: PW, email_confirm: true,
-    user_metadata: { full_name: u.full_name, role: u.role },
-  });
-  if (error) throw error;
-  console.log(`  ${u.role.padEnd(16)} ${u.email} (created)`);
-  return data.user.id;
+  let userId;
+  if (hit) {
+    userId = hit.id;
+    console.log(`  ${u.role.padEnd(16)} ${u.email} (exists)`);
+  } else {
+    const { data, error } = await db.auth.admin.createUser({
+      email: u.email, password: PW, email_confirm: true,
+      user_metadata: { full_name: u.full_name, role: u.role },
+    });
+    if (error) throw error;
+    userId = data.user.id;
+    console.log(`  ${u.role.padEnd(16)} ${u.email} (created)`);
+  }
+  // Upsert profile — handles existing auth users whose profile may be missing
+  // after a schema rebuild (handle_new_user trigger only fires on INSERT).
+  await db.from('profiles').upsert({
+    id: userId, email: u.email, full_name: u.full_name, role: u.role,
+    is_platform_admin: u.role === 'platform_admin',
+  }, { onConflict: 'id' });
+  return userId;
 }
 
 // Insert one row and return it; throws on error.
