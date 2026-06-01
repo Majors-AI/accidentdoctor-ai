@@ -1,143 +1,339 @@
-// ============================================================================
-// Seed script — creates test logins + sample data.
-// Run ONCE after applying schema.sql:
-//   1) npm i @supabase/supabase-js
-//   2) SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node supabase/seed.mjs
-// Find both values in Supabase → Project Settings → API.
-// ============================================================================
+// AccidentDoctor.AI — Phase 1 seed
+// Run once after applying all three SQL files:
+//   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node supabase/seed.mjs
 import { createClient } from '@supabase/supabase-js';
 
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !key) { console.error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'); process.exit(1); }
+
 const db = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+const PW = 'TestPass123!';
 
-const PW = 'TestPass123!'; // password for every seeded login
-
-const users = [
-  { email: 'super@accidentdoctor.ai',    full_name: 'Platform Admin', role: 'admin', platform: true },
-  { email: 'attorney@accidentdoctor.ai', full_name: 'Dana Reyes',   role: 'attorney' },
-  { email: 'staff@accidentdoctor.ai',    full_name: 'Sam Ortega',   role: 'staff' },
-  { email: 'client1@example.com',        full_name: 'Marcus Webb',  role: 'client' },
-  { email: 'client2@example.com',        full_name: 'Lena Park',    role: 'client' },
+const USERS = [
+  { email: 'super@accidentdoctor.ai',        full_name: 'Platform Admin',      role: 'platform_admin' },
+  { email: 'admin@accidentdoctor.ai',         full_name: 'Dr. Patricia Reyes',  role: 'practice_admin' },
+  { email: 'provider@accidentdoctor.ai',      full_name: 'Dr. Marcus Webb',     role: 'provider'       },
+  { email: 'frontdesk@accidentdoctor.ai',     full_name: 'Sam Ortega',          role: 'front_desk'     },
+  { email: 'billing@accidentdoctor.ai',       full_name: 'Lena Park',           role: 'billing_staff'  },
 ];
 
-async function makeUser(u) {
+async function ensureUser(u) {
+  const { data: { users } } = await db.auth.admin.listUsers({ perPage: 1000 });
+  const hit = users.find(x => x.email === u.email);
+  if (hit) { console.log(`  ${u.role.padEnd(16)} ${u.email} (exists)`); return hit.id; }
   const { data, error } = await db.auth.admin.createUser({
     email: u.email, password: PW, email_confirm: true,
     user_metadata: { full_name: u.full_name, role: u.role },
   });
-  if (error && !error.message.includes('already')) throw error;
-  // fetch id (trigger creates the profile row automatically)
-  const { data: list } = await db.auth.admin.listUsers();
-  return list.users.find(x => x.email === u.email).id;
+  if (error) throw error;
+  console.log(`  ${u.role.padEnd(16)} ${u.email} (created)`);
+  return data.user.id;
+}
+
+// Insert one row and return it; throws on error.
+async function ins(table, row) {
+  const { data, error } = await db.from(table).insert(row).select();
+  if (error) throw new Error(`${table}: ${error.message}`);
+  return data[0];
 }
 
 async function main() {
-  console.log('Seeding reference data…');
-  await db.from('jurisdictions').upsert([
-    { code: 'AZ', name: 'Arizona',    comparative_scheme: 'pure_comparative' },
-    { code: 'WA', name: 'Washington', comparative_scheme: 'pure_comparative' },
-  ]);
-  // NOTE: verify these citations/lengths against current law before relying on them.
-  await db.from('sol_rules').upsert([
-    { jurisdiction:'AZ', claim:'mva',            years:2, citation:'A.R.S. § 12-542', notice_days:null },
-    { jurisdiction:'AZ', claim:'negligence',     years:2, citation:'A.R.S. § 12-542', notice_days:null },
-    { jurisdiction:'AZ', claim:'slip_and_fall',  years:2, citation:'A.R.S. § 12-542', notice_days:null },
-    { jurisdiction:'AZ', claim:'dog_bite',       years:1, citation:'A.R.S. § 11-1025 / 12-541', notice_days:null },
-    { jurisdiction:'AZ', claim:'wrongful_death', years:2, citation:'A.R.S. § 12-542', notice_days:null },
-    { jurisdiction:'AZ', claim:'other',          years:2, citation:'A.R.S. § 12-542', notice_days:180, notes:'Govt defendant: 180-day notice of claim (A.R.S. § 12-821.01)' },
-    { jurisdiction:'WA', claim:'mva',            years:3, citation:'RCW 4.16.080', notice_days:null },
-    { jurisdiction:'WA', claim:'negligence',     years:3, citation:'RCW 4.16.080', notice_days:null },
-    { jurisdiction:'WA', claim:'wrongful_death', years:3, citation:'RCW 4.16.080', notice_days:null },
-  ], { onConflict: 'jurisdiction,claim', ignoreDuplicates: true }).then(()=>{},()=>{});
-
-  const { data: firmRows } = await db.from('firms')
-    .upsert({ name: 'AccidentDoctor AI (Demo Firm)', default_jurisdiction: 'AZ',
-              data_security_agreed: true, clients_informed_agreed: true,
-              allow_platform_metrics: true, marketing_source: 'Google Ads' }).select();
-  const firm_id = firmRows?.[0]?.id ?? (await db.from('firms').select('id').limit(1)).data[0].id;
-
-  await db.from('providers').upsert([
-    { name: 'Desert Spine & Injury', specialty:'Chiropractic', city:'Tempe', state:'AZ', phone:'480-555-0101' },
-    { name: 'Valley Ortho Group',    specialty:'Orthopedics',  city:'Phoenix', state:'AZ', phone:'602-555-0144' },
-  ]);
-
-  await db.from('templates').upsert([
-    { firm_id, type:'lor',           name:'Standard LOR',           body:'Re: {{client_name}} — DOL {{date_of_loss}}\n\nThis confirms our representation of {{client_name}} for injuries sustained on {{date_of_loss}}…' },
-    { firm_id, type:'fee_agreement', name:'Contingency Fee (AZ)',   body:'Attorney fee: {{fee_pct}} pre-litigation; 40% upon filing suit…' },
-    { firm_id, type:'demand',        name:'Demand Skeleton',        body:'DEMAND FOR SETTLEMENT — {{client_name}}\nDate of loss: {{date_of_loss}}\nLiability: …\nDamages: …\nDemand: {{amount_sought}}' },
-  ]);
-
-  console.log('Creating test users…');
+  // ---- Users ----------------------------------------------------------------
+  console.log('Users:');
   const ids = {};
-  for (const u of users) { ids[u.email] = await makeUser(u); console.log('  •', u.email); }
-  // attach firm to staff/attorney profiles
-  await db.from('profiles').update({ firm_id }).in('id', [ids['attorney@accidentdoctor.ai'], ids['staff@accidentdoctor.ai']]);
-  // flag platform super admin
+  for (const u of USERS) ids[u.email] = await ensureUser(u);
+
+  // ---- Practice -------------------------------------------------------------
+  console.log('Practice:');
+  let prac;
+  const { data: existing } = await db.from('practices').select().limit(1);
+  if (existing.length) {
+    prac = existing[0];
+    console.log('  using existing practice:', prac.name);
+  } else {
+    prac = await ins('practices', {
+      name: 'Desert Spine & Wellness (Demo)',
+      npi: '1234567890',
+      specialty: 'chiropractic',
+      city: 'Tempe', state: 'AZ', zip: '85281',
+      phone: '480-555-0100', fax: '480-555-0101',
+      data_security_agreed: true,
+      allow_platform_metrics: true,
+      marketing_source: 'AccidentLawyer.AI Referral',
+    });
+    console.log('  created:', prac.name);
+  }
+
+  const staffIds = [
+    ids['admin@accidentdoctor.ai'],
+    ids['provider@accidentdoctor.ai'],
+    ids['frontdesk@accidentdoctor.ai'],
+    ids['billing@accidentdoctor.ai'],
+  ];
+  await db.from('profiles').update({ practice_id: prac.id }).in('id', staffIds);
   await db.from('profiles').update({ is_platform_admin: true }).eq('id', ids['super@accidentdoctor.ai']);
 
-  // client records
-  const { data: c1 } = await db.from('clients').insert({ profile_id: ids['client1@example.com'], full_name:'Marcus Webb', email:'client1@example.com', dob:'1990-04-12', health_insurer:'BCBS', firm_id }).select();
-  const { data: c2 } = await db.from('clients').insert({ profile_id: ids['client2@example.com'], full_name:'Lena Park',  email:'client2@example.com', dob:'2009-08-01', is_minor:true, firm_id }).select(); // minor
+  const provId    = ids['provider@accidentdoctor.ai'];
+  const billingId = ids['billing@accidentdoctor.ai'];
 
-  console.log('Creating sample cases…');
-  // Case 1: accepted, treating, clean liability
-  const { data: case1 } = await db.from('cases').insert({
-    firm_id, client_id: c1[0].id, attorney_id: ids['attorney@accidentdoctor.ai'],
-    status:'treating', claim:'mva', jurisdiction:'AZ', date_of_loss:'2026-03-10',
-    location:'Loop 202 & Rural Rd, Tempe', narrative:'Rear-ended at a red light; neck and back pain.',
-    sol_date:'2028-03-10', sol_citation:'A.R.S. § 12-542', fee_phase:'pre_lit', fee_pct:0.3333,
-    accepted_fault_pct:100, lead_source:'Google Ads',
-  }).select();
-  await db.from('insurance_policies').insert([
-    { case_id:case1[0].id, kind:'adverse_liability', carrier:'State Farm', limits:25000, verified:true },
-    { case_id:case1[0].id, kind:'client_um_uim',     carrier:'Geico',      limits:100000, verified:false },
+  // ---- Patients -------------------------------------------------------------
+  console.log('Patients:');
+
+  const pat1 = await ins('patients', {
+    practice_id: prac.id,
+    full_name: 'Carlos Rivera', email: 'carlos.rivera@example.com',
+    phone: '602-555-0201', dob: '1988-07-15',
+    health_insurer: 'BCBS AZ',
+    al_patient_ref: 'AL-PAT-00142',
+    referral_firm_name: 'Gonzalez & Shaw PI Law',
+  });
+
+  const pat2 = await ins('patients', {
+    practice_id: prac.id,
+    full_name: 'Aisha Thompson', email: 'aisha.thompson@example.com',
+    phone: '480-555-0312', dob: '1995-03-22',
+    referral_firm_name: 'Thompson & Lee Attorneys',
+  });
+
+  const pat3 = await ins('patients', {
+    practice_id: prac.id,
+    full_name: 'Robert Kim', email: 'robert.kim@example.com',
+    phone: '623-555-0418', dob: '1975-11-03',
+    health_insurer: 'ICW Group',
+  });
+
+  console.log('  created 3 patients');
+
+  // ---- Patient charts -------------------------------------------------------
+  console.log('Charts:');
+
+  // PI-lien, active treatment — has signed notes + ledger entries
+  const chart1 = await ins('patient_charts', {
+    practice_id: prac.id, patient_id: pat1.id, primary_provider_id: provId,
+    status: 'in_treatment',
+    date_of_injury: '2026-04-18',
+    mechanism_of_injury: 'mva_rear_end',
+    injury_description: 'Rear-ended at traffic signal; cervical and lumbar strain.',
+    body_regions_affected: ['cervical', 'lumbar'],
+    payer_type: 'pi_lien',
+    referring_attorney_name: 'Maria Gonzalez',
+    referring_law_firm: 'Gonzalez & Shaw PI Law',
+    al_case_ref: 'AL-CASE-00892',
+    lien_on_file: true,
+    lien_amount: 12000,
+    total_billed: 415,
+    total_balance: 415,
+  });
+
+  // PI-lien, intake complete — no notes yet; first appointment upcoming
+  const chart2 = await ins('patient_charts', {
+    practice_id: prac.id, patient_id: pat2.id, primary_provider_id: provId,
+    status: 'intake_complete',
+    date_of_injury: '2026-05-10',
+    mechanism_of_injury: 'slip_and_fall',
+    injury_description: 'Slip on wet grocery-store floor; right shoulder and knee.',
+    body_regions_affected: ['right_shoulder', 'right_knee'],
+    payer_type: 'pi_lien',
+    referring_attorney_name: 'James Lee',
+    referring_law_firm: 'Thompson & Lee Attorneys',
+    lien_on_file: false,
+  });
+
+  // Workers' comp — WC fields populated; signed initial-eval note
+  const chart3 = await ins('patient_charts', {
+    practice_id: prac.id, patient_id: pat3.id, primary_provider_id: provId,
+    status: 'in_treatment',
+    date_of_injury: '2026-03-05',
+    mechanism_of_injury: 'work_related_lift',
+    injury_description: 'Lifting injury; lumbar disc herniation L4-L5 with radiculopathy.',
+    body_regions_affected: ['lumbar', 'left_leg'],
+    payer_type: 'workers_comp',
+    wc_claim_number: 'WC-2026-00441',
+    wc_employer: 'Valley Logistics LLC',
+    wc_carrier: 'ICW Group',
+    wc_adjuster_name: 'Sandra Mills',
+    wc_adjuster_phone: '602-555-0900',
+    wc_auth_status: 'authorized',
+    total_billed: 200,
+    total_balance: 200,
+  });
+
+  console.log('  created 3 charts (2 pi_lien, 1 workers_comp)');
+
+  // ---- Treatment plans ------------------------------------------------------
+  console.log('Treatment plans:');
+
+  await ins('treatment_plans', {
+    chart_id: chart1.id, created_by: provId,
+    diagnosis_codes: ['M54.2', 'M54.5'],
+    planned_visits: 24,
+    frequency: '3x/week x 4 wks, then 2x/week x 4 wks',
+    modalities: ['chiropractic_manipulation', 'soft_tissue_therapy', 'electrical_stimulation'],
+    goals: 'Reduce pain to 2/10 or less; restore full cervical and lumbar ROM.',
+    status: 'active',
+  });
+
+  await ins('treatment_plans', {
+    chart_id: chart3.id, created_by: provId,
+    diagnosis_codes: ['M51.16', 'M54.42'],
+    planned_visits: 20,
+    frequency: '2x/week x 10 wks',
+    modalities: ['chiropractic_manipulation', 'flexion_distraction', 'mechanical_traction'],
+    goals: 'Resolve radiculopathy; achieve full duty return-to-work.',
+    wc_auth_required: true,
+    wc_auth_number: 'AUTH-2026-7791',
+    wc_auth_visits_authorized: 20,
+    wc_auth_expiry: '2026-09-30',
+    status: 'active',
+  });
+
+  console.log('  created 2 treatment plans');
+
+  // ---- Appointments ---------------------------------------------------------
+  console.log('Appointments:');
+
+  const apt1 = await ins('appointments', {
+    chart_id: chart1.id, practice_id: prac.id, provider_id: provId,
+    scheduled_at: '2026-05-12T09:00:00Z',
+    visit_type: 'initial_eval', status: 'completed',
+    confirmed_at: '2026-05-11T14:00:00Z', reminder_status: 'sent',
+  });
+
+  const apt2 = await ins('appointments', {
+    chart_id: chart1.id, practice_id: prac.id, provider_id: provId,
+    scheduled_at: '2026-05-19T09:00:00Z',
+    visit_type: 'follow_up', status: 'completed',
+    confirmed_at: '2026-05-18T12:00:00Z', reminder_status: 'sent',
+  });
+
+  // Upcoming — reminder queued
+  await ins('appointments', {
+    chart_id: chart1.id, practice_id: prac.id, provider_id: provId,
+    scheduled_at: '2026-06-05T09:00:00Z',
+    visit_type: 'follow_up', status: 'scheduled', reminder_status: 'queued',
+  });
+
+  // Chart2 first appointment (intake)
+  await ins('appointments', {
+    chart_id: chart2.id, practice_id: prac.id, provider_id: provId,
+    scheduled_at: '2026-06-10T11:00:00Z',
+    visit_type: 'initial_eval', status: 'scheduled', reminder_status: 'queued',
+  });
+
+  const apt3 = await ins('appointments', {
+    chart_id: chart3.id, practice_id: prac.id, provider_id: provId,
+    scheduled_at: '2026-05-15T10:00:00Z',
+    visit_type: 'initial_eval', status: 'completed',
+    confirmed_at: '2026-05-14T10:00:00Z', reminder_status: 'sent',
+  });
+
+  console.log('  created 5 appointments');
+
+  // ---- Visit notes + CPT charges -------------------------------------------
+  console.log('Visit notes and charges:');
+
+  // Chart1 / apt1 — PI lien initial eval, signed
+  const note1 = await ins('visit_notes', {
+    appointment_id: apt1.id, chart_id: chart1.id, provider_id: provId,
+    visit_date: '2026-05-12',
+    subjective: 'Patient reports 7/10 neck pain and 6/10 low back pain following MVA on 4/18/2026. Worsened by prolonged sitting. Disrupted sleep.',
+    objective: 'Cervical ROM: flexion 35 deg (nl 50), extension 40 deg (nl 60). Lumbar ROM: flexion 60 deg (nl 90). Positive cervical compression. Bilateral paraspinal guarding noted.',
+    assessment: 'Cervicalgia (M54.2) and acute lumbar strain (M54.5) secondary to MVA. Significant ROM deficits consistent with soft-tissue injury.',
+    plan: 'Spinal manipulation cervical and lumbar regions. Soft-tissue therapy bilateral paraspinals. Patient tolerated well. Plan: 3x/week per treatment plan.',
+    diagnosis_codes: ['M54.2', 'M54.5'],
+    status: 'signed', signed_at: '2026-05-12T11:30:00Z', signed_by: provId,
+  });
+
+  const { error: ce1 } = await db.from('charges').insert([
+    { visit_note_id: note1.id, chart_id: chart1.id, cpt_code: '98941', description: 'CMT 3-4 regions', units: 1, fee_amount: 120, status: 'billed' },
+    { visit_note_id: note1.id, chart_id: chart1.id, cpt_code: '97140', description: 'Manual therapy',  units: 2, fee_amount: 90,  status: 'billed' },
+    { visit_note_id: note1.id, chart_id: chart1.id, cpt_code: '97010', description: 'Hot/cold packs',  units: 1, fee_amount: 25,  status: 'billed' },
   ]);
-  await db.from('follow_ups').insert([
-    { case_id:case1[0].id, label:'24h confirm', due_at:new Date(Date.now()+864e5).toISOString() },
-    { case_id:case1[0].id, label:'5 day',  due_at:new Date(Date.now()+5*864e5).toISOString() },
-    { case_id:case1[0].id, label:'2 week', due_at:new Date(Date.now()+14*864e5).toISOString() },
-    { case_id:case1[0].id, label:'30 day', due_at:new Date(Date.now()+30*864e5).toISOString() },
+  if (ce1) throw new Error('charges note1: ' + ce1.message);
+
+  await ins('billing_ledger', {
+    chart_id: chart1.id, practice_id: prac.id,
+    entry_date: '2026-05-12', entry_type: 'charge', amount: 235,
+    reference_type: 'charge', memo: 'Initial eval: 98941 + 97140x2 + 97010',
+    created_by: provId,
+  });
+
+  // Chart1 / apt2 — follow-up, signed
+  const note2 = await ins('visit_notes', {
+    appointment_id: apt2.id, chart_id: chart1.id, provider_id: provId,
+    visit_date: '2026-05-19',
+    subjective: 'Patient reports improvement: neck 5/10, low back 4/10. Sleeping better.',
+    objective: 'Cervical ROM: flexion 42 deg, extension 48 deg. Lumbar ROM: flexion 72 deg. Decreased paraspinal guarding.',
+    assessment: 'Cervicalgia (M54.2) and lumbar strain (M54.5) improving with conservative care.',
+    plan: 'Continued spinal manipulation and soft-tissue therapy. Added electrical stimulation for residual muscle spasm. Continue per treatment plan.',
+    diagnosis_codes: ['M54.2', 'M54.5'],
+    status: 'signed', signed_at: '2026-05-19T10:45:00Z', signed_by: provId,
+  });
+
+  const { error: ce2 } = await db.from('charges').insert([
+    { visit_note_id: note2.id, chart_id: chart1.id, cpt_code: '98941', description: 'CMT 3-4 regions',       units: 1, fee_amount: 120, status: 'billed' },
+    { visit_note_id: note2.id, chart_id: chart1.id, cpt_code: '97014', description: 'E-stim unattended',     units: 1, fee_amount: 35,  status: 'billed' },
+    { visit_note_id: note2.id, chart_id: chart1.id, cpt_code: '97010', description: 'Hot/cold packs',        units: 1, fee_amount: 25,  status: 'billed' },
   ]);
-  await db.from('deadlines').insert({ case_id:case1[0].id, type:'sol', due_at:'2028-03-10', label:'Statute of limitations (A.R.S. § 12-542)' });
-  await db.from('communications').insert({ case_id:case1[0].id, channel:'email', subject:'We are representing you — what to expect',
-    body:'Dear Marcus, we are pleased to represent you for your personal-injury claim…', status:'queued', requires_approval:true, drafted_by:'agent' });
-  await db.from('messages').insert({ case_id:case1[0].id, sender_id:ids['attorney@accidentdoctor.ai'], sender_role:'attorney',
-    body:'Hi Marcus — welcome aboard. Use this thread any time you have questions about your treatment or your case.' });
-  await db.from('settlements').insert({ case_id:case1[0].id, offer_amount:48000, status:'funded' }); // drives super-admin metrics
+  if (ce2) throw new Error('charges note2: ' + ce2.message);
 
-  // Case 2: new lead under review, minor client, disputed liability + low limits
-  const { data: case2 } = await db.from('cases').insert({
-    firm_id, client_id: c2[0].id, status:'under_review', claim:'slip_and_fall', jurisdiction:'AZ',
-    date_of_loss:'2026-05-02', location:'Grocery store, Mesa', narrative:'Slipped on unmarked wet floor.',
-    liability_disputed:true, accepted_fault_pct:50, limits_issue:true, lead_source:'Referral',
-  }).select();
-  await db.from('conflicts_checks').insert({ case_id:case2[0].id, result:'clear', details:{ checked_names:['Lena Park'], driver_at_fault:false } });
+  await ins('billing_ledger', {
+    chart_id: chart1.id, practice_id: prac.id,
+    entry_date: '2026-05-19', entry_type: 'charge', amount: 180,
+    reference_type: 'charge', memo: 'Follow-up: 98941 + 97014 + 97010',
+    created_by: provId,
+  });
 
-  // --- firm billing (one overdue with late fee, one open with a document-order charge) ---
-  const overdueDue = new Date(Date.now()-5*864e5).toISOString();
-  const { data: inv1 } = await db.from('invoices').insert({ firm_id, period_label:'April 2026', amount:299, late_fee:25, status:'overdue', due_at:overdueDue }).select().single();
-  await db.from('invoice_items').insert([
-    { invoice_id:inv1.id, kind:'subscription', description:'Standard plan — April', amount:299 },
-    { invoice_id:inv1.id, kind:'late_fee', description:'Late fee (missed payment)', amount:25 },
+  // Chart3 / apt3 — WC initial eval, signed
+  const note3 = await ins('visit_notes', {
+    appointment_id: apt3.id, chart_id: chart3.id, provider_id: provId,
+    visit_date: '2026-05-15',
+    subjective: 'Patient reports 8/10 low back pain radiating to left leg since lifting injury 3/5/2026. Numbness and tingling in L4 distribution. Unable to perform job duties.',
+    objective: 'Lumbar ROM severely limited: flexion 30 deg, extension 15 deg. Positive SLR left at 45 deg. Diminished L4 reflex. MRI confirms L4-L5 disc herniation with left foraminal stenosis.',
+    assessment: 'Lumbar disc herniation L4-L5 (M51.16) with left L4 radiculopathy (M54.42). Work-related injury; WC claim WC-2026-00441 on file.',
+    plan: 'Flexion-distraction technique L4-L5. Mechanical traction 15 min. Ice post-treatment. WC auth AUTH-2026-7791 on file for 20 visits. Next visit: 5/17.',
+    diagnosis_codes: ['M51.16', 'M54.42'],
+    status: 'signed', signed_at: '2026-05-15T11:00:00Z', signed_by: provId,
+    // fee_schedule_amount is null — WC fee schedule data loads in Phase 3
+  });
+
+  const { error: ce3 } = await db.from('charges').insert([
+    { visit_note_id: note3.id, chart_id: chart3.id, cpt_code: '98942', description: 'CMT 5 regions',     units: 1, fee_amount: 145, status: 'billed' },
+    { visit_note_id: note3.id, chart_id: chart3.id, cpt_code: '97012', description: 'Mechanical traction', units: 1, fee_amount: 55,  status: 'billed' },
   ]);
-  const { data: inv2 } = await db.from('invoices').insert({ firm_id, period_label:'May 2026', amount:324, status:'open' }).select().single();
-  await db.from('invoice_items').insert([
-    { invoice_id:inv2.id, kind:'subscription', description:'Standard plan — May', amount:299 },
-    { invoice_id:inv2.id, kind:'document_order', description:'Police report order', amount:25 },
-  ]);
-  await db.from('document_orders').insert({ firm_id, case_id:case1[0].id, type:'police_report', vendor:'AZ DPS', cost:25, status:'received', billed:true });
+  if (ce3) throw new Error('charges note3: ' + ce3.message);
 
-  // --- legacy client import example ---
-  const { data: lc } = await db.from('clients').insert({ full_name:'Robert Vance', email:'rvance@example.com', firm_id, legacy:true }).select().single();
-  await db.from('cases').insert({ firm_id, client_id:lc.id, status:'demand', claim:'mva', lead_source:'legacy', date_of_loss:'2025-11-02' });
+  await ins('billing_ledger', {
+    chart_id: chart3.id, practice_id: prac.id,
+    entry_date: '2026-05-15', entry_type: 'charge', amount: 200,
+    reference_type: 'charge', memo: 'WC initial eval: 98942 + 97012',
+    created_by: provId,
+  });
 
-  // --- pending signature gates case 1 (shows on attorney case + client dashboard) ---
-  await db.from('approvals').insert({ case_id:case1[0].id, kind:'release',
-    title:'Sign release & settlement statement', requires_signature:true, status:'requested' });
+  console.log('  created 3 signed notes, 7 charges, 3 ledger entries');
 
-  console.log('\nDone. Test logins (password for all: %s):', PW);
-  users.forEach(u => console.log('  •', u.role.padEnd(9), u.email));
+  // ---- Integrations ---------------------------------------------------------
+  await db.from('integrations').upsert([
+    { practice_id: prac.id, provider: 'twilio',    connected: false, config: {} },
+    { practice_id: prac.id, provider: 'sendgrid',  connected: false, config: {} },
+    { practice_id: prac.id, provider: 'al_bridge', connected: false, config: { mode: 'mock' } },
+  ], { onConflict: 'practice_id,provider' });
+  console.log('Integrations: 3 seeded (all disconnected)');
+
+  // ---- SaaS billing ---------------------------------------------------------
+  const inv = await ins('invoices', {
+    practice_id: prac.id, period_label: 'May 2026', amount: 299, status: 'open',
+  });
+  await ins('invoice_items', {
+    invoice_id: inv.id, kind: 'subscription',
+    description: 'Standard plan — May 2026', amount: 299,
+  });
+  console.log('SaaS billing: 1 open invoice');
+
+  // ---- Summary --------------------------------------------------------------
+  console.log('\nDone. Logins (password: TestPass123!):');
+  USERS.forEach(u => console.log(`  ${u.role.padEnd(16)} ${u.email}`));
 }
+
 main().catch(e => { console.error(e); process.exit(1); });
