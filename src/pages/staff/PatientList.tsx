@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../App';
 
 // chart_status → tag class
 const statusTag: Record<string, string> = {
@@ -27,8 +28,10 @@ const payerBadge: Record<string, { label: string; cls: string }> = {
 
 export default function PatientList() {
   const nav = useNavigate();
+  const { profile } = useAuth();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const canReferral = ['front_desk', 'practice_admin', 'platform_admin'].includes(profile?.role ?? '');
 
   useEffect(() => {
     (async () => {
@@ -54,6 +57,11 @@ export default function PatientList() {
           <h1>Patients</h1>
           <div className="sub">{rows.length} charts · {active} active</div>
         </div>
+        {canReferral && (
+          <button className="btn oxblood" onClick={() => nav('/referrals/new')}>
+            + New referral
+          </button>
+        )}
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

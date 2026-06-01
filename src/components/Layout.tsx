@@ -26,6 +26,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <NavLink to="/patients" className={({ isActive }) => isActive ? 'active' : ''}>
               Patients
             </NavLink>
+            <NavLink to="/referrals" className={({ isActive }) => isActive ? 'active' : ''}>
+              Referrals
+            </NavLink>
             <NavLink to="/schedule" className={({ isActive }) => isActive ? 'active' : ''}>
               Schedule
             </NavLink>

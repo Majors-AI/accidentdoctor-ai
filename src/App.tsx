@@ -5,6 +5,9 @@ import Login from './pages/Login';
 import Layout from './components/Layout';
 import PatientList from './pages/staff/PatientList';
 import ChartDetail from './pages/staff/ChartDetail';
+import Referrals from './pages/staff/Referrals';
+import NewReferral from './pages/staff/NewReferral';
+import Schedule from './pages/staff/Schedule';
 import Practices from './pages/admin/Practices';
 import Account from './pages/firm/Account';
 import Placeholder from './pages/Placeholder';
@@ -74,7 +77,9 @@ export default function App() {
               <Route path="/"                element={<PatientList />} />
               <Route path="/patients"        element={<PatientList />} />
               <Route path="/patients/:id"    element={<ChartDetail />} />
-              <Route path="/schedule"        element={<Placeholder title="Schedule" note="Appointment calendar — built in Chunk 2." />} />
+              <Route path="/referrals"       element={<Referrals />} />
+              <Route path="/referrals/new"   element={<NewReferral />} />
+              <Route path="/schedule"        element={<Schedule />} />
               <Route path="/billing"         element={<Placeholder title="Billing" note="Billing ledger & reductions — built in Chunk 4." />} />
               <Route path="/account"         element={<Account />} />
               <Route path="*"                element={<Navigate to="/" />} />
