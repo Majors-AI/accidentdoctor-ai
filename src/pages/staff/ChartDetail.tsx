@@ -108,10 +108,31 @@ export default function ChartDetail() {
   const [cptSaving, setCptSaving] = useState(false);
   const [cptErr, setCptErr]       = useState('');
 
+  // Billing
+  const [reductions, setReductions]        = useState<any[]>([]);
+  const [showPayForm, setShowPayForm]       = useState(false);
+  const [pyAmount, setPyAmount]             = useState('');
+  const [pyDate, setPyDate]                 = useState('');
+  const [pyMethod, setPyMethod]             = useState('cash');
+  const [pyMemo, setPyMemo]                 = useState('');
+  const [pySaving, setPySaving]             = useState(false);
+  const [pyErr, setPyErr]                   = useState('');
+  const [showRedForm, setShowRedForm]       = useState(false);
+  const [rdAttorney, setRdAttorney]         = useState('');
+  const [rdFirm, setRdFirm]                 = useState('');
+  const [rdRequestedTo, setRdRequestedTo]   = useState('');
+  const [rdNotes, setRdNotes]               = useState('');
+  const [rdSaving, setRdSaving]             = useState(false);
+  const [rdErr, setRdErr]                   = useState('');
+  const [approvingId, setApprovingId]       = useState<string | null>(null);
+  const [decliningId, setDecliningId]       = useState<string | null>(null);
+
   // Role helpers
   const role             = profile?.role ?? '';
   const canWriteClinical = ['provider', 'practice_admin', 'platform_admin'].includes(role);
   const isAdminRole      = ['practice_admin', 'platform_admin'].includes(role);
+  const canBillingWrite  = ['billing_staff', 'practice_admin', 'platform_admin'].includes(role);
+  const canApproveRed    = ['practice_admin', 'platform_admin'].includes(role);
 
   const canEditNote = (n: any) =>
     canWriteClinical && n.status === 'draft' &&
@@ -122,7 +143,7 @@ export default function ChartDetail() {
     (n.provider_id === profile?.id || isAdminRole);
 
   async function load() {
-    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }] =
+    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }, { data: reds }] =
       await Promise.all([
         supabase.from('patient_charts').select('*, patients(*)').eq('id', id!).single(),
         supabase.from('appointments').select('*').eq('chart_id', id!).order('scheduled_at', { ascending: false }),
@@ -139,6 +160,10 @@ export default function ChartDetail() {
         supabase.from('profiles').select('id, full_name')
           .eq('practice_id', profile?.practice_id ?? '')
           .in('role', ['provider', 'practice_admin']),
+        supabase.from('reduction_requests')
+          .select('*, reviewer:profiles!reviewed_by(full_name), reduction_audit_log(*, performer:profiles!performed_by(full_name))')
+          .eq('chart_id', id!)
+          .order('created_at', { ascending: false }),
       ]);
     setChart(c);
     setApts(a ?? []);
@@ -146,6 +171,7 @@ export default function ChartDetail() {
     setLedger(l ?? []);
     setTreatmentPlan(tp?.[0] ?? null);
     setProviders(prov ?? []);
+    setReductions(reds ?? []);
   }
 
   useEffect(() => { load(); }, [id]);
@@ -159,6 +185,23 @@ export default function ChartDetail() {
   const totalCharges = notes
     .flatMap((n: any) => n.charges ?? [])
     .reduce((s: number, c: any) => s + Number(c.fee_amount ?? 0) * Number(c.units ?? 1), 0);
+
+  const allCharges   = notes.flatMap((n: any) =>
+    (n.charges ?? []).map((c: any) => ({ ...c, visitDate: n.visit_date }))
+  );
+  const billedTotal  = allCharges
+    .filter((c: any) => ['billed', 'paid', 'adjusted', 'written_off'].includes(c.status))
+    .reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
+  const pendingTotal = allCharges
+    .filter((c: any) => c.status === 'pending')
+    .reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
+  const paidTotal    = ledger
+    .filter((e: any) => Number(e.amount) < 0 && e.entry_type === 'payment')
+    .reduce((s: number, e: any) => s + Math.abs(Number(e.amount)), 0);
+  const redTotal     = ledger
+    .filter((e: any) => Number(e.amount) < 0 && e.entry_type === 'lien_reduction')
+    .reduce((s: number, e: any) => s + Math.abs(Number(e.amount)), 0);
+  const balance      = billedTotal - paidTotal - redTotal;
 
   const Tab = ({ id: t, label }: { id: string; label: string }) => (
     <button className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>
@@ -339,6 +382,166 @@ export default function ChartDetail() {
       n.id === cptNoteId ? { ...n, charges: [...(n.charges ?? []), data] } : n
     ));
     setCptNoteId(null); setCptSaving(false);
+  }
+
+  // ── Billing handlers ──────────────────────────────────────────────────────
+
+  async function markChargeBilled(charge: any) {
+    const fee = Number(charge.fee_amount) * Number(charge.units ?? 1);
+    await supabase.from('charges').update({ status: 'billed' }).eq('id', charge.id);
+    await supabase.from('billing_ledger').insert({
+      chart_id:       id,
+      practice_id:    profile?.practice_id,
+      entry_type:     'charge',
+      amount:         fee,
+      reference_id:   charge.id,
+      reference_type: 'charge',
+      memo:           `CPT ${charge.cpt_code}${charge.description ? ' — ' + charge.description : ''}`,
+      created_by:     profile?.id,
+    });
+    await supabase.from('patient_charts').update({
+      total_billed:  Number(chart.total_billed ?? 0) + fee,
+      total_balance: Number(chart.total_balance ?? 0) + fee,
+    }).eq('id', id!);
+    await load();
+  }
+
+  async function markAllPendingBilled() {
+    const pending = allCharges.filter((c: any) => c.status === 'pending');
+    if (!pending.length) return;
+    const ids = pending.map((c: any) => c.id);
+    const tot = pending.reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
+    await supabase.from('charges').update({ status: 'billed' }).in('id', ids);
+    await supabase.from('billing_ledger').insert(
+      pending.map((c: any) => ({
+        chart_id:       id,
+        practice_id:    profile?.practice_id,
+        entry_type:     'charge',
+        amount:         Number(c.fee_amount) * Number(c.units ?? 1),
+        reference_id:   c.id,
+        reference_type: 'charge',
+        memo:           `CPT ${c.cpt_code}${c.description ? ' — ' + c.description : ''}`,
+        created_by:     profile?.id,
+      }))
+    );
+    await supabase.from('patient_charts').update({
+      total_billed:  Number(chart.total_billed ?? 0) + tot,
+      total_balance: Number(chart.total_balance ?? 0) + tot,
+    }).eq('id', id!);
+    await load();
+  }
+
+  async function handleRecordPayment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pyAmount || !pyDate) { setPyErr('Amount and date are required.'); return; }
+    const amt = Number(pyAmount);
+    if (amt <= 0) { setPyErr('Amount must be positive.'); return; }
+    setPySaving(true); setPyErr('');
+    await supabase.from('billing_ledger').insert({
+      chart_id:       id,
+      practice_id:    profile?.practice_id,
+      entry_date:     pyDate,
+      entry_type:     'payment',
+      amount:         -amt,
+      reference_type: 'payment',
+      memo:           pyMemo || `Payment via ${pyMethod}`,
+      created_by:     profile?.id,
+    });
+    await supabase.from('patient_charts').update({
+      total_paid:    Number(chart.total_paid ?? 0) + amt,
+      total_balance: Number(chart.total_balance ?? 0) - amt,
+    }).eq('id', id!);
+    setPyAmount(''); setPyDate(''); setPyMethod('cash'); setPyMemo('');
+    setShowPayForm(false); setPySaving(false);
+    await load();
+  }
+
+  async function handleCreateReduction(e: React.FormEvent) {
+    e.preventDefault();
+    if (!rdRequestedTo) { setRdErr('Requested settlement amount is required.'); return; }
+    const reqTo = Number(rdRequestedTo);
+    if (reqTo < 0) { setRdErr('Amount must be ≥ 0.'); return; }
+    setRdSaving(true); setRdErr('');
+    const snapshot = billedTotal || Number(chart.total_billed ?? 0);
+    const { data: red, error } = await supabase.from('reduction_requests')
+      .insert({
+        chart_id:               id,
+        practice_id:            profile?.practice_id,
+        requesting_attorney:    rdAttorney || null,
+        requesting_firm:        rdFirm || null,
+        total_billed:           snapshot,
+        reduction_requested_to: reqTo,
+        notes:                  rdNotes || null,
+        status:                 'pending',
+      })
+      .select('*')
+      .single();
+    if (error || !red) { setRdErr(error?.message ?? 'Failed.'); setRdSaving(false); return; }
+    await supabase.from('reduction_audit_log').insert({
+      reduction_id:   red.id,
+      action:         'submitted',
+      performed_by:   profile?.id,
+      new_status:     'pending',
+      amount_at_time: reqTo,
+      notes:          rdNotes || null,
+    });
+    setRdAttorney(''); setRdFirm(''); setRdRequestedTo(''); setRdNotes('');
+    setShowRedForm(false); setRdSaving(false);
+    await load();
+  }
+
+  async function handleApproveReduction(red: any) {
+    setApprovingId(red.id);
+    const reductionAmt = Math.max(0, Number(red.total_billed) - Number(red.reduction_requested_to));
+    await supabase.from('reduction_requests').update({
+      status:      'approved',
+      reviewed_by: profile?.id,
+      reviewed_at: new Date().toISOString(),
+    }).eq('id', red.id);
+    if (reductionAmt > 0) {
+      await supabase.from('billing_ledger').insert({
+        chart_id:       id,
+        practice_id:    profile?.practice_id,
+        entry_type:     'lien_reduction',
+        amount:         -reductionAmt,
+        reference_id:   red.id,
+        reference_type: 'reduction',
+        memo:           `Reduction approved — billed $${Number(red.total_billed).toLocaleString()} → settled $${Number(red.reduction_requested_to).toLocaleString()}`,
+        created_by:     profile?.id,
+      });
+      await supabase.from('patient_charts').update({
+        total_balance: Math.max(0, Number(chart.total_balance ?? 0) - reductionAmt),
+      }).eq('id', id!);
+    }
+    await supabase.from('reduction_audit_log').insert({
+      reduction_id:   red.id,
+      action:         'approved',
+      performed_by:   profile?.id,
+      old_status:     'pending',
+      new_status:     'approved',
+      amount_at_time: Number(red.reduction_requested_to),
+    });
+    setApprovingId(null);
+    await load();
+  }
+
+  async function handleDeclineReduction(red: any) {
+    setDecliningId(red.id);
+    await supabase.from('reduction_requests').update({
+      status:      'declined',
+      reviewed_by: profile?.id,
+      reviewed_at: new Date().toISOString(),
+    }).eq('id', red.id);
+    await supabase.from('reduction_audit_log').insert({
+      reduction_id:   red.id,
+      action:         'declined',
+      performed_by:   profile?.id,
+      old_status:     'pending',
+      new_status:     'declined',
+      amount_at_time: Number(red.reduction_requested_to),
+    });
+    setDecliningId(null);
+    await load();
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -919,29 +1122,141 @@ export default function ChartDetail() {
       {/* ── BILLING ───────────────────────────────────────────────────────── */}
       {tab === 'billing' && (
         <>
-          <div className="grid three" style={{ marginBottom: 16 }}>
-            <div className="card" style={{ marginBottom: 0 }}>
-              <div className="muted small">Total billed</div>
-              <div style={{ fontSize: 24, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4 }}>
-                ${Number(chart.total_billed ?? 0).toLocaleString()}
+          {/* Stats */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+            {[
+              { label: 'Pending charges', val: pendingTotal, cls: pendingTotal > 0 ? 'var(--warn)' : undefined },
+              { label: 'Total billed',    val: billedTotal,  cls: undefined },
+              { label: 'Total paid',      val: paidTotal,    cls: 'var(--good)' },
+              { label: 'Balance',         val: balance,      cls: balance > 0 ? 'var(--warn)' : 'var(--good)' },
+            ].map(s => (
+              <div key={s.label} className="card" style={{ marginBottom: 0 }}>
+                <div className="muted small">{s.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4, color: s.cls }}>
+                  ${s.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
               </div>
-            </div>
-            <div className="card" style={{ marginBottom: 0 }}>
-              <div className="muted small">Total paid</div>
-              <div style={{ fontSize: 24, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4 }}>
-                ${Number(chart.total_paid ?? 0).toLocaleString()}
-              </div>
-            </div>
-            <div className="card" style={{ marginBottom: 0 }}>
-              <div className="muted small">Balance</div>
-              <div style={{ fontSize: 24, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4,
-                color: Number(chart.total_balance ?? 0) > 0 ? 'var(--warn)' : 'var(--good)' }}>
-                ${Number(chart.total_balance ?? 0).toLocaleString()}
-              </div>
-            </div>
+            ))}
           </div>
 
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {/* Charge line items */}
+          <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 18px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: 600 }}>
+                Charge line items
+                {pendingTotal > 0 && (
+                  <span className="muted small" style={{ fontWeight: 400, marginLeft: 8 }}>
+                    · ${pendingTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pending
+                  </span>
+                )}
+              </div>
+              {canBillingWrite && allCharges.some((c: any) => c.status === 'pending') && (
+                <button className="btn ghost sm" onClick={markAllPendingBilled}>Mark all billed</button>
+              )}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th><th>CPT</th><th>Description</th>
+                  <th style={{ textAlign: 'right' }}>Units</th>
+                  <th style={{ textAlign: 'right' }}>Fee</th>
+                  <th style={{ textAlign: 'right' }}>Subtotal</th>
+                  <th>Status</th>
+                  {canBillingWrite && <th />}
+                </tr>
+              </thead>
+              <tbody>
+                {allCharges.length === 0 && (
+                  <tr><td colSpan={canBillingWrite ? 8 : 7} className="muted">No charges yet — add CPT codes from signed visit notes.</td></tr>
+                )}
+                {allCharges.map((c: any) => {
+                  const sub = Number(c.fee_amount) * Number(c.units ?? 1);
+                  const stCls = c.status === 'paid' ? 'good' : c.status === 'billed' ? 'gold' : ['adjusted','written_off'].includes(c.status) ? 'ink' : 'soft';
+                  return (
+                    <tr key={c.id}>
+                      <td className="small">{c.visitDate ?? '—'}</td>
+                      <td><code style={{ fontSize: 12 }}>{c.cpt_code}</code></td>
+                      <td className="small muted">{c.description ?? '—'}</td>
+                      <td className="small" style={{ textAlign: 'right' }}>{c.units ?? 1}</td>
+                      <td className="small" style={{ textAlign: 'right' }}>
+                        ${Number(c.fee_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="small" style={{ textAlign: 'right', fontWeight: 600 }}>
+                        ${sub.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td><span className={`tag tiny ${stCls}`}>{(c.status ?? '').replace(/_/g, ' ')}</span></td>
+                      {canBillingWrite && (
+                        <td>
+                          {c.status === 'pending' && (
+                            <button className="btn ghost sm" style={{ fontSize: 11.5 }}
+                              onClick={() => markChargeBilled(c)}>
+                              Mark billed
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Record payment */}
+          {canBillingWrite && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                marginBottom: showPayForm ? 14 : 0 }}>
+                <div style={{ fontWeight: 600 }}>Record payment</div>
+                <button className="btn ghost sm" onClick={() => { setShowPayForm(f => !f); setPyErr(''); }}>
+                  {showPayForm ? 'Cancel' : '+ Add payment'}
+                </button>
+              </div>
+              {showPayForm && (
+                <form onSubmit={handleRecordPayment}>
+                  <div className="row">
+                    <div>
+                      <label>Amount *</label>
+                      <input type="number" min="0.01" step="0.01" placeholder="0.00"
+                        value={pyAmount} onChange={e => setPyAmount(e.target.value)} />
+                    </div>
+                    <div>
+                      <label>Date *</label>
+                      <input type="date" value={pyDate} onChange={e => setPyDate(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="row">
+                    <div>
+                      <label>Method</label>
+                      <select value={pyMethod} onChange={e => setPyMethod(e.target.value)}>
+                        <option value="cash">Cash</option>
+                        <option value="check">Check</option>
+                        <option value="ach">ACH / wire</option>
+                        <option value="card">Card</option>
+                        <option value="insurance">Insurance payment</option>
+                        <option value="attorney">Attorney trust</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Memo</label>
+                      <input type="text" placeholder="Check #1234, settlement ref…"
+                        value={pyMemo} onChange={e => setPyMemo(e.target.value)} />
+                    </div>
+                  </div>
+                  {pyErr && <div className="err">{pyErr}</div>}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                    <button type="submit" disabled={pySaving}>{pySaving ? 'Saving…' : 'Record payment'}</button>
+                    <button type="button" className="btn ghost" onClick={() => setShowPayForm(false)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* Billing ledger */}
+          <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 18px 12px', fontWeight: 600 }}>Billing ledger</div>
             <table>
               <thead>
                 <tr>
@@ -958,7 +1273,7 @@ export default function ChartDetail() {
                     <td className="small muted">{e.memo ?? '—'}</td>
                     <td className="small" style={{ textAlign: 'right', fontWeight: 600,
                       color: Number(e.amount) < 0 ? 'var(--good)' : undefined }}>
-                      {Number(e.amount) < 0 ? '-' : '+'}${Math.abs(Number(e.amount)).toLocaleString()}
+                      {Number(e.amount) < 0 ? '−' : '+'}${Math.abs(Number(e.amount)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
@@ -966,10 +1281,155 @@ export default function ChartDetail() {
             </table>
           </div>
 
+          {/* Reduction requests */}
           <div className="card">
-            <div className="scaffold">
-              Reduction portal, payments, and lien management — Chunk 4 (billing &amp; discharge).
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ fontWeight: 600 }}>
+                Reduction requests
+                {chart.payer_type === 'pi_lien' && (
+                  <span className="tag gold tiny" style={{ marginLeft: 8 }}>PI lien</span>
+                )}
+              </div>
+              {canBillingWrite && !showRedForm && (
+                <button className="btn ghost sm" onClick={() => {
+                  setRdAttorney(chart.referring_attorney_name ?? '');
+                  setRdFirm(chart.referring_law_firm ?? '');
+                  setRdRequestedTo(''); setRdNotes(''); setRdErr('');
+                  setShowRedForm(true);
+                }}>
+                  + New request
+                </button>
+              )}
             </div>
+
+            {showRedForm && canBillingWrite && (
+              <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '14px 16px', marginBottom: 16, background: 'var(--paper)' }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 12 }}>New reduction request</div>
+                <form onSubmit={handleCreateReduction}>
+                  <div className="row">
+                    <div>
+                      <label>Requesting attorney</label>
+                      <input type="text" placeholder="Jane Doe, Esq."
+                        value={rdAttorney} onChange={e => setRdAttorney(e.target.value)} />
+                    </div>
+                    <div>
+                      <label>Law firm</label>
+                      <input type="text" placeholder="Smith &amp; Jones LLP"
+                        value={rdFirm} onChange={e => setRdFirm(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="row">
+                    <div>
+                      <label>Billed total (snapshot)</label>
+                      <input type="text" readOnly
+                        value={`$${(billedTotal || Number(chart.total_billed ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                        style={{ background: 'var(--paper-2)', color: 'var(--ink-soft)' }} />
+                    </div>
+                    <div>
+                      <label>Requested settlement amount *</label>
+                      <input type="number" min="0" step="0.01" placeholder="0.00"
+                        value={rdRequestedTo} onChange={e => setRdRequestedTo(e.target.value)} />
+                    </div>
+                  </div>
+                  {rdRequestedTo && (
+                    <div className="muted small" style={{ marginBottom: 8, marginTop: -4 }}>
+                      Reduction of ${Math.max(0, (billedTotal || Number(chart.total_billed ?? 0)) - Number(rdRequestedTo))
+                        .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  )}
+                  <div>
+                    <label>Notes</label>
+                    <textarea rows={2} style={{ resize: 'vertical' }}
+                      placeholder="Reason for reduction request…"
+                      value={rdNotes} onChange={e => setRdNotes(e.target.value)} />
+                  </div>
+                  {rdErr && <div className="err">{rdErr}</div>}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <button type="submit" disabled={rdSaving}>{rdSaving ? 'Saving…' : 'Submit request'}</button>
+                    <button type="button" className="btn ghost" onClick={() => setShowRedForm(false)}>Cancel</button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {reductions.length === 0 && !showRedForm && (
+              <div className="muted small">No reduction requests yet.</div>
+            )}
+
+            {reductions.map((red: any) => {
+              const reductionAmt = Math.max(0, Number(red.total_billed) - Number(red.reduction_requested_to));
+              const isPending    = red.status === 'pending';
+              const isApproving  = approvingId === red.id;
+              const isDeclining  = decliningId === red.id;
+              const auditLog: any[] = red.reduction_audit_log ?? [];
+              const stCls = red.status === 'approved' ? 'good' : red.status === 'declined' ? 'soft' : red.status === 'lien_released' ? 'ink' : 'gold';
+              return (
+                <div key={red.id} style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                    <div>
+                      <span className={`tag tiny ${stCls}`}>{red.status}</span>
+                      {(red.requesting_attorney || red.requesting_firm) && (
+                        <span className="muted small" style={{ marginLeft: 8 }}>
+                          {[red.requesting_attorney, red.requesting_firm].filter(Boolean).join(' · ')}
+                        </span>
+                      )}
+                    </div>
+                    <div className="muted tiny">{new Date(red.created_at).toLocaleDateString()}</div>
+                  </div>
+
+                  <dl className="kv" style={{ fontSize: 13 }}>
+                    <dt>Billed</dt>
+                    <dd>${Number(red.total_billed).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                    <dt>Settle to</dt>
+                    <dd>${Number(red.reduction_requested_to).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                    <dt>Reduction</dt>
+                    <dd style={{ color: 'var(--warn)', fontWeight: 600 }}>
+                      −${reductionAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </dd>
+                    {red.notes && <><dt>Notes</dt><dd>{red.notes}</dd></>}
+                    {red.reviewer?.full_name && <><dt>Reviewed by</dt><dd>{red.reviewer.full_name}</dd></>}
+                  </dl>
+
+                  {isPending && canApproveRed && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button className="btn sm"
+                        style={{ background: 'var(--good)', borderColor: 'var(--good)', fontSize: 12 }}
+                        disabled={isApproving || isDeclining}
+                        onClick={() => handleApproveReduction(red)}>
+                        {isApproving ? 'Approving…' : 'Approve'}
+                      </button>
+                      <button className="btn ghost sm" style={{ fontSize: 12 }}
+                        disabled={isApproving || isDeclining}
+                        onClick={() => handleDeclineReduction(red)}>
+                        {isDeclining ? 'Declining…' : 'Decline'}
+                      </button>
+                    </div>
+                  )}
+
+                  {auditLog.length > 0 && (
+                    <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+                      <div className="muted tiny" style={{ marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                        Audit trail
+                      </div>
+                      {auditLog.map((entry: any) => (
+                        <div key={entry.id} style={{ display: 'flex', gap: 8, fontSize: 12.5, marginBottom: 4, alignItems: 'center' }}>
+                          <span className="muted" style={{ minWidth: 88, fontSize: 12 }}>
+                            {new Date(entry.created_at).toLocaleDateString()}
+                          </span>
+                          <span className="tag soft tiny">{entry.action}</span>
+                          <span className="muted" style={{ fontSize: 12 }}>{entry.performer?.full_name ?? '—'}</span>
+                          {entry.amount_at_time != null && (
+                            <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600 }}>
+                              ${Number(entry.amount_at_time).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
