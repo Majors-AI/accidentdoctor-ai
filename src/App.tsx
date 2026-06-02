@@ -10,7 +10,7 @@ import NewReferral from './pages/staff/NewReferral';
 import Schedule from './pages/staff/Schedule';
 import Practices from './pages/admin/Practices';
 import Account from './pages/firm/Account';
-import Placeholder from './pages/Placeholder';
+import Billing from './pages/staff/Billing';
 
 export type PracticeRole =
   | 'front_desk' | 'provider' | 'billing_staff'
@@ -80,7 +80,7 @@ export default function App() {
               <Route path="/referrals"       element={<Referrals />} />
               <Route path="/referrals/new"   element={<NewReferral />} />
               <Route path="/schedule"        element={<Schedule />} />
-              <Route path="/billing"         element={<Placeholder title="Billing" note="Billing ledger & reductions — built in Chunk 4." />} />
+              <Route path="/billing"         element={<Billing />} />
               <Route path="/account"         element={<Account />} />
               <Route path="*"                element={<Navigate to="/" />} />
             </>

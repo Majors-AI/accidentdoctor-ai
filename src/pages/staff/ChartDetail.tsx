@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../App';
 import { sendSmsReminder } from '../../lib/notifications';
@@ -48,18 +48,40 @@ const COMMON_CPT = [
   { code: '99213', desc: 'Office visit, established patient' },
 ];
 
+function computeChartFinancials(notes: any[], ledger: any[]) {
+  const allCharges = notes.flatMap((n: any) =>
+    (n.charges ?? []).map((c: any) => ({ ...c, visitDate: n.visit_date }))
+  );
+  const billedTotal = allCharges
+    .filter((c: any) => ['billed', 'paid', 'adjusted', 'written_off'].includes(c.status))
+    .reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
+  const pendingTotal = allCharges
+    .filter((c: any) => c.status === 'pending')
+    .reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
+  const paidTotal = ledger
+    .filter((e: any) => Number(e.amount) < 0 && e.entry_type === 'payment')
+    .reduce((s: number, e: any) => s + Math.abs(Number(e.amount)), 0);
+  const reductionTotal = ledger
+    .filter((e: any) => Number(e.amount) < 0 && e.entry_type === 'lien_reduction')
+    .reduce((s: number, e: any) => s + Math.abs(Number(e.amount)), 0);
+  const balance = billedTotal - paidTotal - reductionTotal;
+  return { allCharges, billedTotal, pendingTotal, paidTotal, reductionTotal, balance };
+}
+
 export default function ChartDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const { profile } = useAuth();
+  const [searchParams] = useSearchParams();
 
-  const [chart, setChart]                 = useState<any>(null);
-  const [apts, setApts]                   = useState<any[]>([]);
-  const [notes, setNotes]                 = useState<any[]>([]);
-  const [ledger, setLedger]               = useState<any[]>([]);
-  const [treatmentPlan, setTreatmentPlan] = useState<any>(null);
-  const [providers, setProviders]         = useState<any[]>([]);
-  const [tab, setTab]                     = useState('overview');
+  const [chart, setChart]                       = useState<any>(null);
+  const [apts, setApts]                         = useState<any[]>([]);
+  const [notes, setNotes]                       = useState<any[]>([]);
+  const [ledger, setLedger]                     = useState<any[]>([]);
+  const [treatmentPlan, setTreatmentPlan]       = useState<any>(null);
+  const [providers, setProviders]               = useState<any[]>([]);
+  const [dischargePackage, setDischargePackage] = useState<any>(null);
+  const [tab, setTab]                           = useState(searchParams.get('tab') ?? 'overview');
 
   // Appointment form
   const [showApptForm, setShowApptForm] = useState(false);
@@ -127,6 +149,13 @@ export default function ChartDetail() {
   const [approvingId, setApprovingId]       = useState<string | null>(null);
   const [decliningId, setDecliningId]       = useState<string | null>(null);
 
+  // Discharge
+  const [showDischForm, setShowDischForm] = useState(false);
+  const [dxSummary, setDxSummary]         = useState('');
+  const [txSummary, setTxSummary]         = useState('');
+  const [dischSaving, setDischSaving]     = useState(false);
+  const [dischErr, setDischErr]           = useState('');
+
   // Role helpers
   const role             = profile?.role ?? '';
   const canWriteClinical = ['provider', 'practice_admin', 'platform_admin'].includes(role);
@@ -143,7 +172,7 @@ export default function ChartDetail() {
     (n.provider_id === profile?.id || isAdminRole);
 
   async function load() {
-    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }, { data: reds }] =
+    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }, { data: reds }, { data: dp }] =
       await Promise.all([
         supabase.from('patient_charts').select('*, patients(*)').eq('id', id!).single(),
         supabase.from('appointments').select('*').eq('chart_id', id!).order('scheduled_at', { ascending: false }),
@@ -164,6 +193,11 @@ export default function ChartDetail() {
           .select('*, reviewer:profiles!reviewed_by(full_name), reduction_audit_log(*, performer:profiles!performed_by(full_name))')
           .eq('chart_id', id!)
           .order('created_at', { ascending: false }),
+        supabase.from('discharge_packages')
+          .select('*')
+          .eq('chart_id', id!)
+          .order('created_at', { ascending: false })
+          .limit(1),
       ]);
     setChart(c);
     setApts(a ?? []);
@@ -172,6 +206,7 @@ export default function ChartDetail() {
     setTreatmentPlan(tp?.[0] ?? null);
     setProviders(prov ?? []);
     setReductions(reds ?? []);
+    setDischargePackage(dp?.[0] ?? null);
   }
 
   useEffect(() => { load(); }, [id]);
@@ -186,22 +221,7 @@ export default function ChartDetail() {
     .flatMap((n: any) => n.charges ?? [])
     .reduce((s: number, c: any) => s + Number(c.fee_amount ?? 0) * Number(c.units ?? 1), 0);
 
-  const allCharges   = notes.flatMap((n: any) =>
-    (n.charges ?? []).map((c: any) => ({ ...c, visitDate: n.visit_date }))
-  );
-  const billedTotal  = allCharges
-    .filter((c: any) => ['billed', 'paid', 'adjusted', 'written_off'].includes(c.status))
-    .reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
-  const pendingTotal = allCharges
-    .filter((c: any) => c.status === 'pending')
-    .reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
-  const paidTotal    = ledger
-    .filter((e: any) => Number(e.amount) < 0 && e.entry_type === 'payment')
-    .reduce((s: number, e: any) => s + Math.abs(Number(e.amount)), 0);
-  const redTotal     = ledger
-    .filter((e: any) => Number(e.amount) < 0 && e.entry_type === 'lien_reduction')
-    .reduce((s: number, e: any) => s + Math.abs(Number(e.amount)), 0);
-  const balance      = billedTotal - paidTotal - redTotal;
+  const { allCharges, billedTotal, pendingTotal, paidTotal, balance } = computeChartFinancials(notes, ledger);
 
   const Tab = ({ id: t, label }: { id: string; label: string }) => (
     <button className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>
@@ -388,6 +408,7 @@ export default function ChartDetail() {
 
   async function markChargeBilled(charge: any) {
     const fee = Number(charge.fee_amount) * Number(charge.units ?? 1);
+    const { billedTotal: curBilled, balance: curBalance } = computeChartFinancials(notes, ledger);
     await supabase.from('charges').update({ status: 'billed' }).eq('id', charge.id);
     await supabase.from('billing_ledger').insert({
       chart_id:       id,
@@ -400,14 +421,15 @@ export default function ChartDetail() {
       created_by:     profile?.id,
     });
     await supabase.from('patient_charts').update({
-      total_billed:  Number(chart.total_billed ?? 0) + fee,
-      total_balance: Number(chart.total_balance ?? 0) + fee,
+      total_billed:  curBilled + fee,
+      total_balance: curBalance + fee,
     }).eq('id', id!);
     await load();
   }
 
   async function markAllPendingBilled() {
-    const pending = allCharges.filter((c: any) => c.status === 'pending');
+    const { allCharges: cur, billedTotal: curBilled, balance: curBalance } = computeChartFinancials(notes, ledger);
+    const pending = cur.filter((c: any) => c.status === 'pending');
     if (!pending.length) return;
     const ids = pending.map((c: any) => c.id);
     const tot = pending.reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
@@ -425,8 +447,8 @@ export default function ChartDetail() {
       }))
     );
     await supabase.from('patient_charts').update({
-      total_billed:  Number(chart.total_billed ?? 0) + tot,
-      total_balance: Number(chart.total_balance ?? 0) + tot,
+      total_billed:  curBilled + tot,
+      total_balance: curBalance + tot,
     }).eq('id', id!);
     await load();
   }
@@ -447,9 +469,10 @@ export default function ChartDetail() {
       memo:           pyMemo || `Payment via ${pyMethod}`,
       created_by:     profile?.id,
     });
+    const { paidTotal: curPaid, balance: curBalance } = computeChartFinancials(notes, ledger);
     await supabase.from('patient_charts').update({
-      total_paid:    Number(chart.total_paid ?? 0) + amt,
-      total_balance: Number(chart.total_balance ?? 0) - amt,
+      total_paid:    curPaid + amt,
+      total_balance: curBalance - amt,
     }).eq('id', id!);
     setPyAmount(''); setPyDate(''); setPyMethod('cash'); setPyMemo('');
     setShowPayForm(false); setPySaving(false);
@@ -493,6 +516,7 @@ export default function ChartDetail() {
   async function handleApproveReduction(red: any) {
     setApprovingId(red.id);
     const reductionAmt = Math.max(0, Number(red.total_billed) - Number(red.reduction_requested_to));
+    const { balance: curBalance } = computeChartFinancials(notes, ledger);
     await supabase.from('reduction_requests').update({
       status:      'approved',
       reviewed_by: profile?.id,
@@ -510,7 +534,7 @@ export default function ChartDetail() {
         created_by:     profile?.id,
       });
       await supabase.from('patient_charts').update({
-        total_balance: Math.max(0, Number(chart.total_balance ?? 0) - reductionAmt),
+        total_balance: curBalance - reductionAmt,
       }).eq('id', id!);
     }
     await supabase.from('reduction_audit_log').insert({
@@ -544,6 +568,43 @@ export default function ChartDetail() {
     await load();
   }
 
+  // ── Discharge handler ─────────────────────────────────────────────────────
+
+  async function handleGenerateDischarge(e: React.FormEvent) {
+    e.preventDefault();
+    if (!dxSummary.trim()) { setDischErr('Diagnosis summary is required.'); return; }
+    setDischSaving(true); setDischErr('');
+
+    const { billedTotal: snapBilled, paidTotal: snapPaid, balance: snapBalance } = computeChartFinancials(notes, ledger);
+    const signedNotes = notes.filter((n: any) => n.status === 'signed');
+    const visitDates  = signedNotes.map((n: any) => n.visit_date).filter(Boolean).sort();
+
+    const { data, error } = await supabase.from('discharge_packages').insert({
+      chart_id:          id,
+      status:            'complete',
+      visit_count:       signedNotes.length,
+      date_first_visit:  visitDates[0] ?? null,
+      date_last_visit:   visitDates[visitDates.length - 1] ?? null,
+      total_billed:      snapBilled,
+      total_paid:        snapPaid,
+      total_balance:     snapBalance,
+      diagnosis_summary: dxSummary.trim(),
+      treatment_summary: txSummary.trim() || null,
+      created_by:        profile?.id,
+    }).select('*').single();
+
+    if (error || !data) { setDischErr(error?.message ?? 'Failed to generate discharge package.'); setDischSaving(false); return; }
+
+    await supabase.from('patient_charts').update({
+      status:           'discharged',
+      discharge_status: 'complete',
+      discharge_date:   new Date().toISOString().slice(0, 10),
+    }).eq('id', id!);
+
+    setShowDischForm(false); setDischSaving(false);
+    await load();
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -572,6 +633,7 @@ export default function ChartDetail() {
         <Tab id="appointments" label={`Appointments (${apts.length})`} />
         <Tab id="notes"        label={`Visit notes (${notes.length})`} />
         <Tab id="billing"      label="Billing" />
+        <Tab id="discharge"    label="Discharge" />
       </div>
 
       {/* ── OVERVIEW ──────────────────────────────────────────────────────── */}
@@ -1124,12 +1186,11 @@ export default function ChartDetail() {
         <>
           {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
-            {[
+            {([
               { label: 'Pending charges', val: pendingTotal, cls: pendingTotal > 0 ? 'var(--warn)' : undefined },
               { label: 'Total billed',    val: billedTotal,  cls: undefined },
               { label: 'Total paid',      val: paidTotal,    cls: 'var(--good)' },
-              { label: 'Balance',         val: balance,      cls: balance > 0 ? 'var(--warn)' : 'var(--good)' },
-            ].map(s => (
+            ] as { label: string; val: number; cls?: string }[]).map(s => (
               <div key={s.label} className="card" style={{ marginBottom: 0 }}>
                 <div className="muted small">{s.label}</div>
                 <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4, color: s.cls }}>
@@ -1137,6 +1198,16 @@ export default function ChartDetail() {
                 </div>
               </div>
             ))}
+            <div className="card" style={{ marginBottom: 0 }}>
+              <div className="muted small">Balance</div>
+              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4,
+                color: balance > 0 ? 'var(--warn)' : balance < 0 ? 'var(--ink-soft)' : 'var(--good)' }}>
+                ${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              {balance < 0 && (
+                <div className="muted tiny" style={{ marginTop: 4 }}>credit · overpaid</div>
+              )}
+            </div>
           </div>
 
           {/* Charge line items */}
@@ -1431,6 +1502,128 @@ export default function ChartDetail() {
               );
             })}
           </div>
+        </>
+      )}
+
+      {/* ── DISCHARGE ─────────────────────────────────────────────────────── */}
+      {tab === 'discharge' && (
+        <>
+          {dischargePackage ? (
+            <>
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                  <h3>Discharge package</h3>
+                  <span className="tag good tiny">complete</span>
+                </div>
+                <dl className="kv">
+                  <dt>Discharge date</dt>
+                  <dd>{chart.discharge_date ?? new Date(dischargePackage.created_at).toLocaleDateString()}</dd>
+                  <dt>Visits completed</dt>
+                  <dd>{dischargePackage.visit_count ?? signedCount}</dd>
+                  {dischargePackage.date_first_visit && <><dt>First visit</dt><dd>{dischargePackage.date_first_visit}</dd></>}
+                  {dischargePackage.date_last_visit  && <><dt>Last visit</dt> <dd>{dischargePackage.date_last_visit}</dd></>}
+                  <dt>Total billed</dt>
+                  <dd>${Number(dischargePackage.total_billed ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                  <dt>Total paid</dt>
+                  <dd>${Number(dischargePackage.total_paid ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                  <dt>Balance at discharge</dt>
+                  <dd style={{ fontWeight: 700, color: Number(dischargePackage.total_balance) < 0 ? 'var(--ink-soft)' : undefined }}>
+                    ${Number(dischargePackage.total_balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(dischargePackage.total_balance) < 0 && (
+                      <span className="muted small" style={{ marginLeft: 6, fontWeight: 400 }}>credit</span>
+                    )}
+                  </dd>
+                  {dischargePackage.diagnosis_summary && (
+                    <><dt>Diagnosis summary</dt><dd style={{ whiteSpace: 'pre-wrap' }}>{dischargePackage.diagnosis_summary}</dd></>
+                  )}
+                  {dischargePackage.treatment_summary && (
+                    <><dt>Treatment summary</dt><dd style={{ whiteSpace: 'pre-wrap' }}>{dischargePackage.treatment_summary}</dd></>
+                  )}
+                </dl>
+                <div style={{ marginTop: 16 }}>
+                  <button className="btn ghost sm" disabled
+                    title="PDF export coming soon" style={{ opacity: 0.55 }}>
+                    Export PDF (coming soon)
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {chart.status === 'discharged' ? (
+                <div className="card">
+                  <div className="muted">This chart is marked discharged but no discharge package was found.</div>
+                </div>
+              ) : (
+                <>
+                  {canWriteClinical && !showDischForm && (
+                    <div className="card">
+                      <div className="muted small" style={{ marginBottom: 14 }}>
+                        No discharge package yet. Generate one to snapshot the final treatment record and mark this chart discharged.
+                      </div>
+                      <button className="btn sm oxblood" onClick={() => {
+                        setTxSummary(treatmentPlan?.goals ?? '');
+                        setDxSummary(''); setDischErr('');
+                        setShowDischForm(true);
+                      }}>
+                        Generate discharge package
+                      </button>
+                    </div>
+                  )}
+
+                  {!canWriteClinical && (
+                    <div className="card">
+                      <div className="muted small">No discharge package yet. A provider or admin must generate it.</div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {showDischForm && canWriteClinical && (
+                <div className="card">
+                  <h3 style={{ marginBottom: 14 }}>Generate discharge package</h3>
+                  <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--paper-2)', borderRadius: 8, fontSize: 13.5 }}>
+                    <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                      <div><span className="muted">Signed visits</span> <b style={{ marginLeft: 6 }}>{signedCount}</b></div>
+                      <div><span className="muted">Total billed</span> <b style={{ marginLeft: 6 }}>${billedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+                      <div><span className="muted">Total paid</span> <b style={{ marginLeft: 6 }}>${paidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+                      <div>
+                        <span className="muted">Balance</span>
+                        <b style={{ marginLeft: 6, color: balance < 0 ? 'var(--ink-soft)' : undefined }}>
+                          ${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </b>
+                        {balance < 0 && <span className="muted tiny" style={{ marginLeft: 5 }}>credit</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <form onSubmit={handleGenerateDischarge}>
+                    <div>
+                      <label>Diagnosis summary *</label>
+                      <textarea rows={4} style={{ resize: 'vertical' }}
+                        placeholder="Final diagnosis codes and clinical summary…"
+                        value={dxSummary} onChange={e => setDxSummary(e.target.value)} />
+                    </div>
+                    <div>
+                      <label>Treatment summary <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></label>
+                      <textarea rows={4} style={{ resize: 'vertical' }}
+                        placeholder="Summary of treatment provided, goals achieved, outcomes…"
+                        value={txSummary} onChange={e => setTxSummary(e.target.value)} />
+                    </div>
+                    {dischErr && <div className="err">{dischErr}</div>}
+                    <div className="flag warn" style={{ marginBottom: 14, marginTop: 4 }}>
+                      <div>Generating will set chart status to <b>discharged</b>. This cannot be undone from the UI.</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="submit" disabled={dischSaving}>
+                        {dischSaving ? 'Generating…' : 'Generate & discharge'}
+                      </button>
+                      <button type="button" className="btn ghost" onClick={() => setShowDischForm(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
     </>
