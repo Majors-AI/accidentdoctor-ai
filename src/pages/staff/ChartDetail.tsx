@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { logChartAccess } from '../../lib/accessLog';
 import { useAuth } from '../../App';
 import { sendSmsReminder } from '../../lib/notifications';
 
@@ -84,6 +85,8 @@ export default function ChartDetail() {
   const [providers, setProviders]               = useState<any[]>([]);
   const [dischargePackage, setDischargePackage] = useState<any>(null);
   const [charges, setCharges]                   = useState<any[]>([]);
+  const [accessLog, setAccessLog]               = useState<any[]>([]);
+  const accessLoggedRef                         = useRef<string | null>(null);
   const [tab, setTab]                           = useState(searchParams.get('tab') ?? 'overview');
 
   // Appointment form
@@ -178,7 +181,7 @@ export default function ChartDetail() {
     (n.provider_id === profile?.id || isAdminRole);
 
   async function load() {
-    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }, { data: reds }, { data: dp }, { data: ch }] =
+    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }, { data: reds }, { data: dp }, { data: ch }, { data: al }] =
       await Promise.all([
         supabase.from('patient_charts').select('*, patients(*)').eq('id', id!).single(),
         supabase.from('appointments').select('*').eq('chart_id', id!).order('scheduled_at', { ascending: false }),
@@ -205,6 +208,11 @@ export default function ChartDetail() {
           .order('created_at', { ascending: false })
           .limit(1),
         supabase.from('charges').select('*, visit_notes(visit_date)').eq('chart_id', id!).order('created_at', { ascending: false }),
+        supabase.from('phi_access_log')
+          .select('*, actor:profiles!actor_id(full_name)')
+          .eq('chart_id', id!)
+          .order('created_at', { ascending: false })
+          .limit(20),
       ]);
     setChart(c);
     setApts(a ?? []);
@@ -215,9 +223,23 @@ export default function ChartDetail() {
     setReductions(reds ?? []);
     setDischargePackage(dp?.[0] ?? null);
     setCharges(ch ?? []);
+    setAccessLog(al ?? []);
   }
 
   useEffect(() => { load(); }, [id]);
+
+  useEffect(() => {
+    if (!profile?.id || !profile?.practice_id) return;
+    if (accessLoggedRef.current === id) return;
+    accessLoggedRef.current = id ?? null;
+    logChartAccess({
+      chartId:    id!,
+      practiceId: profile.practice_id,
+      actorId:    profile.id,
+      actorRole:  profile.role ?? '',
+      action:     'view_chart',
+    });
+  }, [id, profile?.id]);
 
   if (!chart) return <div className="muted" style={{ padding: 40 }}>Loading…</div>;
 
@@ -838,6 +860,34 @@ export default function ChartDetail() {
               )}
             </div>
           </div>
+
+          {isAdminRole && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px 12px', fontWeight: 600 }}>Access history</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Who</th><th>Role</th><th>Action</th><th>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accessLog.length === 0 && (
+                    <tr><td colSpan={4} className="muted">No access events recorded yet.</td></tr>
+                  )}
+                  {accessLog.map((e: any) => (
+                    <tr key={e.id}>
+                      <td className="small">{e.actor?.full_name ?? '—'}</td>
+                      <td><span className="tag soft tiny">{(e.actor_role ?? '—').replace(/_/g, ' ')}</span></td>
+                      <td className="small">{(e.action ?? '—').replace(/_/g, ' ')}</td>
+                      <td className="small muted">
+                        {new Date(e.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
