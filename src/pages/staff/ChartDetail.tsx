@@ -48,10 +48,8 @@ const COMMON_CPT = [
   { code: '99213', desc: 'Office visit, established patient' },
 ];
 
-function computeChartFinancials(notes: any[], ledger: any[]) {
-  const allCharges = notes.flatMap((n: any) =>
-    (n.charges ?? []).map((c: any) => ({ ...c, visitDate: n.visit_date }))
-  );
+function computeChartFinancials(charges: any[], ledger: any[]) {
+  const allCharges = charges.map((c: any) => ({ ...c, visitDate: c.visit_notes?.visit_date }));
   const billedTotal = allCharges
     .filter((c: any) => ['billed', 'paid', 'adjusted', 'written_off'].includes(c.status))
     .reduce((s: number, c: any) => s + Number(c.fee_amount) * Number(c.units ?? 1), 0);
@@ -81,6 +79,7 @@ export default function ChartDetail() {
   const [treatmentPlan, setTreatmentPlan]       = useState<any>(null);
   const [providers, setProviders]               = useState<any[]>([]);
   const [dischargePackage, setDischargePackage] = useState<any>(null);
+  const [charges, setCharges]                   = useState<any[]>([]);
   const [tab, setTab]                           = useState(searchParams.get('tab') ?? 'overview');
 
   // Appointment form
@@ -172,7 +171,7 @@ export default function ChartDetail() {
     (n.provider_id === profile?.id || isAdminRole);
 
   async function load() {
-    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }, { data: reds }, { data: dp }] =
+    const [{ data: c }, { data: a }, { data: n }, { data: l }, { data: tp }, { data: prov }, { data: reds }, { data: dp }, { data: ch }] =
       await Promise.all([
         supabase.from('patient_charts').select('*, patients(*)').eq('id', id!).single(),
         supabase.from('appointments').select('*').eq('chart_id', id!).order('scheduled_at', { ascending: false }),
@@ -198,6 +197,7 @@ export default function ChartDetail() {
           .eq('chart_id', id!)
           .order('created_at', { ascending: false })
           .limit(1),
+        supabase.from('charges').select('*, visit_notes(visit_date)').eq('chart_id', id!).order('created_at', { ascending: false }),
       ]);
     setChart(c);
     setApts(a ?? []);
@@ -207,6 +207,7 @@ export default function ChartDetail() {
     setProviders(prov ?? []);
     setReductions(reds ?? []);
     setDischargePackage(dp?.[0] ?? null);
+    setCharges(ch ?? []);
   }
 
   useEffect(() => { load(); }, [id]);
@@ -221,7 +222,7 @@ export default function ChartDetail() {
     .flatMap((n: any) => n.charges ?? [])
     .reduce((s: number, c: any) => s + Number(c.fee_amount ?? 0) * Number(c.units ?? 1), 0);
 
-  const { allCharges, billedTotal, pendingTotal, paidTotal, balance } = computeChartFinancials(notes, ledger);
+  const { allCharges, billedTotal, pendingTotal, paidTotal, balance } = computeChartFinancials(charges, ledger);
 
   const Tab = ({ id: t, label }: { id: string; label: string }) => (
     <button className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>
@@ -401,6 +402,7 @@ export default function ChartDetail() {
     setNotes(prev => prev.map(n =>
       n.id === cptNoteId ? { ...n, charges: [...(n.charges ?? []), data] } : n
     ));
+    await load();
     setCptNoteId(null); setCptSaving(false);
   }
 
@@ -408,7 +410,7 @@ export default function ChartDetail() {
 
   async function markChargeBilled(charge: any) {
     const fee = Number(charge.fee_amount) * Number(charge.units ?? 1);
-    const { billedTotal: curBilled, balance: curBalance } = computeChartFinancials(notes, ledger);
+    const { billedTotal: curBilled, balance: curBalance } = computeChartFinancials(charges, ledger);
     await supabase.from('charges').update({ status: 'billed' }).eq('id', charge.id);
     await supabase.from('billing_ledger').insert({
       chart_id:       id,
@@ -428,7 +430,7 @@ export default function ChartDetail() {
   }
 
   async function markAllPendingBilled() {
-    const { allCharges: cur, billedTotal: curBilled, balance: curBalance } = computeChartFinancials(notes, ledger);
+    const { allCharges: cur, billedTotal: curBilled, balance: curBalance } = computeChartFinancials(charges, ledger);
     const pending = cur.filter((c: any) => c.status === 'pending');
     if (!pending.length) return;
     const ids = pending.map((c: any) => c.id);
@@ -469,7 +471,7 @@ export default function ChartDetail() {
       memo:           pyMemo || `Payment via ${pyMethod}`,
       created_by:     profile?.id,
     });
-    const { paidTotal: curPaid, balance: curBalance } = computeChartFinancials(notes, ledger);
+    const { paidTotal: curPaid, balance: curBalance } = computeChartFinancials(charges, ledger);
     await supabase.from('patient_charts').update({
       total_paid:    curPaid + amt,
       total_balance: curBalance - amt,
@@ -516,7 +518,7 @@ export default function ChartDetail() {
   async function handleApproveReduction(red: any) {
     setApprovingId(red.id);
     const reductionAmt = Math.max(0, Number(red.total_billed) - Number(red.reduction_requested_to));
-    const { balance: curBalance } = computeChartFinancials(notes, ledger);
+    const { balance: curBalance } = computeChartFinancials(charges, ledger);
     await supabase.from('reduction_requests').update({
       status:      'approved',
       reviewed_by: profile?.id,
@@ -575,7 +577,7 @@ export default function ChartDetail() {
     if (!dxSummary.trim()) { setDischErr('Diagnosis summary is required.'); return; }
     setDischSaving(true); setDischErr('');
 
-    const { billedTotal: snapBilled, paidTotal: snapPaid, balance: snapBalance } = computeChartFinancials(notes, ledger);
+    const { billedTotal: snapBilled, paidTotal: snapPaid, balance: snapBalance } = computeChartFinancials(charges, ledger);
     const signedNotes = notes.filter((n: any) => n.status === 'signed');
     const visitDates  = signedNotes.map((n: any) => n.visit_date).filter(Boolean).sort();
 
