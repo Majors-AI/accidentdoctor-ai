@@ -66,6 +66,10 @@ function computeChartFinancials(charges: any[], ledger: any[]) {
   return { allCharges, billedTotal, pendingTotal, paidTotal, reductionTotal, balance };
 }
 
+function firmSharingActive(chart: any): boolean {
+  return !!(chart?.consent_share_with_firm && !chart?.consent_revoked_at);
+}
+
 export default function ChartDetail() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -154,6 +158,9 @@ export default function ChartDetail() {
   const [txSummary, setTxSummary]         = useState('');
   const [dischSaving, setDischSaving]     = useState(false);
   const [dischErr, setDischErr]           = useState('');
+
+  // Consent
+  const [consentSaving, setConsentSaving] = useState(false);
 
   // Role helpers
   const role             = profile?.role ?? '';
@@ -607,6 +614,35 @@ export default function ChartDetail() {
     await load();
   }
 
+  // ── Consent handlers ─────────────────────────────────────────────────────
+
+  async function handleMarkHipaaSigned() {
+    setConsentSaving(true);
+    const { data } = await supabase.from('patient_charts')
+      .update({ hipaa_authorization_signed: true, hipaa_signed_at: new Date().toISOString() })
+      .eq('id', id!).select('*, patients(*)').single();
+    if (data) setChart(data);
+    setConsentSaving(false);
+  }
+
+  async function handleGrantConsent() {
+    setConsentSaving(true);
+    const { data } = await supabase.from('patient_charts')
+      .update({ consent_share_with_firm: true, consent_granted_at: new Date().toISOString(), consent_revoked_at: null })
+      .eq('id', id!).select('*, patients(*)').single();
+    if (data) setChart(data);
+    setConsentSaving(false);
+  }
+
+  async function handleRevokeConsent() {
+    setConsentSaving(true);
+    const { data } = await supabase.from('patient_charts')
+      .update({ consent_share_with_firm: false, consent_revoked_at: new Date().toISOString() })
+      .eq('id', id!).select('*, patients(*)').single();
+    if (data) setChart(data);
+    setConsentSaving(false);
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -740,6 +776,68 @@ export default function ChartDetail() {
               </dl>
             </div>
           )}
+
+          <div className="card">
+            <h3>Consent &amp; record sharing</h3>
+            <dl className="kv">
+              <dt>HIPAA authorization</dt>
+              <dd>
+                {chart.hipaa_authorization_signed ? (
+                  <>
+                    <span className="tag good tiny">Signed</span>
+                    {chart.hipaa_signed_at && (
+                      <span className="muted small" style={{ marginLeft: 8 }}>
+                        {new Date(chart.hipaa_signed_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="tag soft tiny">Not on file</span>
+                )}
+              </dd>
+              <dt>Share with referring firm</dt>
+              <dd>
+                {firmSharingActive(chart) ? (
+                  <>
+                    <span className="tag good tiny">Sharing active</span>
+                    {chart.consent_granted_at && (
+                      <span className="muted small" style={{ marginLeft: 8 }}>
+                        granted {new Date(chart.consent_granted_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </>
+                ) : chart.consent_revoked_at ? (
+                  <>
+                    <span className="tag warn tiny">Revoked</span>
+                    <span className="muted small" style={{ marginLeft: 8 }}>
+                      {new Date(chart.consent_revoked_at).toLocaleDateString()}
+                    </span>
+                  </>
+                ) : (
+                  <span className="tag soft tiny">Not granted</span>
+                )}
+              </dd>
+            </dl>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+              {!chart.hipaa_authorization_signed && (
+                <button className="btn ghost sm" disabled={consentSaving} onClick={handleMarkHipaaSigned}>
+                  {consentSaving ? 'Saving…' : 'Mark HIPAA signed'}
+                </button>
+              )}
+              {!firmSharingActive(chart) && (
+                <button className="btn ghost sm" disabled={consentSaving} onClick={handleGrantConsent}>
+                  {consentSaving ? 'Saving…' : 'Grant firm sharing'}
+                </button>
+              )}
+              {firmSharingActive(chart) && (
+                <button className="btn ghost sm" disabled={consentSaving}
+                  style={{ color: 'var(--warn)', borderColor: 'var(--warn)' }}
+                  onClick={handleRevokeConsent}>
+                  {consentSaving ? 'Saving…' : 'Revoke'}
+                </button>
+              )}
+            </div>
+          </div>
         </>
       )}
 
@@ -960,6 +1058,22 @@ export default function ChartDetail() {
               <button className="btn sm oxblood" onClick={openNewNote}>+ New note</button>
             )}
           </div>
+
+          {chart.payer_type === 'pi_lien' && (
+            <div style={{ marginBottom: 12 }}>
+              {!firmSharingActive(chart) && (
+                <div className="flag warn" style={{ marginBottom: 8 }}>
+                  Record-sharing consent is not on file or has been revoked — cannot transmit to the referring firm.
+                </div>
+              )}
+              <button
+                className="btn ghost sm"
+                disabled={!firmSharingActive(chart)}
+                style={!firmSharingActive(chart) ? { opacity: 0.45 } : undefined}>
+                Transmit records to {chart.referring_law_firm ?? 'referring firm'} (Phase 4)
+              </button>
+            </div>
+          )}
 
           {showNoteForm && canWriteClinical && (
             <div className="card" style={{ marginBottom: 16 }}>
