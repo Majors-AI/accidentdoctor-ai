@@ -696,6 +696,7 @@ export default function ChartDetail() {
         <Tab id="discharge"    label="Discharge" />
       </div>
 
+      <div key={tab} className="tab-panel">
       {/* ── OVERVIEW ──────────────────────────────────────────────────────── */}
       {tab === 'overview' && (
         <>
@@ -1357,14 +1358,14 @@ export default function ChartDetail() {
               { label: 'Total billed',    val: billedTotal,  cls: undefined },
               { label: 'Total paid',      val: paidTotal,    cls: 'var(--good)' },
             ] as { label: string; val: number; cls?: string }[]).map(s => (
-              <div key={s.label} className="card" style={{ marginBottom: 0 }}>
+              <div key={s.label} className="card stat-card" style={{ marginBottom: 0 }}>
                 <div className="muted small">{s.label}</div>
                 <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4, color: s.cls }}>
                   ${s.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
             ))}
-            <div className="card" style={{ marginBottom: 0 }}>
+            <div className="card stat-card" style={{ marginBottom: 0 }}>
               <div className="muted small">Balance</div>
               <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4,
                 color: balance > 0 ? 'var(--warn)' : balance < 0 ? 'var(--ink-soft)' : 'var(--good)' }}>
@@ -1792,6 +1793,7 @@ export default function ChartDetail() {
           )}
         </>
       )}
+      </div>
     </>
   );
 }

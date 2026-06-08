@@ -54,7 +54,7 @@ export default function Billing() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))', gap: 12, marginBottom: 24 }}>
-        <div className="card" style={{ marginBottom: 0 }}>
+        <div className="card stat-card" style={{ marginBottom: 0 }}>
           <div className="muted small">Total outstanding AR</div>
           <div style={{ fontSize: 24, fontWeight: 700, fontFamily: 'var(--serif)', marginTop: 4, color: totalAR > 0 ? 'var(--warn)' : undefined }}>
             ${fmt(totalAR)}
@@ -67,7 +67,7 @@ export default function Billing() {
         {Object.entries(byPayer).map(([pt, { balance, count }]) => {
           const badge = payerBadge[pt] ?? { label: pt.replace(/_/g, ' '), cls: 'soft' };
           return (
-            <div key={pt} className="card" style={{ marginBottom: 0 }}>
+            <div key={pt} className="card stat-card" style={{ marginBottom: 0 }}>
               <div className="muted small">
                 <span className={`tag tiny ${badge.cls}`}>{badge.label}</span>
               </div>

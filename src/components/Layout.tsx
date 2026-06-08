@@ -9,8 +9,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="shell">
       <aside className="side">
         <div className="brand">
-          Accident<br />Doctor<span style={{ color: 'var(--oxblood)' }}>.ai</span>
-          <small>{superAdmin ? 'Platform Admin' : 'Provider Portal'}</small>
+          <div className="brand-mark">AD</div>
+          <div className="brand-text">
+            <strong>AccidentDoctor<span style={{ color: 'var(--indigo-2)' }}>.ai</span></strong>
+            <span>{superAdmin ? 'Platform Admin' : 'Provider Portal'}</span>
+          </div>
         </div>
 
         {superAdmin ? (

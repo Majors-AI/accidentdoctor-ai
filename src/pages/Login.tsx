@@ -17,8 +17,13 @@ export default function Login() {
   return (
     <div className="auth">
       <div className="box">
-        <div className="brand">Accident Doctor<span style={{color:'var(--oxblood)'}}>.ai</span>
-          <small>Case Intelligence</small></div>
+        <div className="brand">
+          <div className="brand-mark">AD</div>
+          <div className="brand-text">
+            <strong>AccidentDoctor<span style={{ color: 'var(--indigo-2)' }}>.ai</span></strong>
+            <span>Case Intelligence</span>
+          </div>
+        </div>
         <h1>Sign in</h1>
         <p className="muted small" style={{marginTop:0}}>Personal-injury case management.</p>
 
