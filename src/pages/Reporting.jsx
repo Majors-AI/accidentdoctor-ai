@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, isWithinInterval, parseISO } from 'date-fns';
 
@@ -51,9 +51,9 @@ export default function Reporting() {
 
     async function load() {
       const [chartsRes, patientsRes, apptsRes] = await Promise.allSettled([
-        base44.entities.PatientChart.list('-created_date', 500),
-        base44.entities.Patient.list('-created_date', 500),
-        base44.entities.Appointment.list('-scheduled_at', 2000),
+        db.entities.PatientChart.list('-created_date', 500),
+        db.entities.Patient.list('-created_date', 500),
+        db.entities.Appointment.list('-scheduled_at', 2000),
       ]);
 
       if (cancelled) return;
@@ -93,7 +93,7 @@ export default function Reporting() {
     const totalBalance = charts.reduce((s, c) => s + (Number(c.total_balance) || 0), 0);
 
     const monthCharts = charts.filter(c => {
-      try { return isWithinInterval(parseISO(c.created_date), { start: monthStart, end: monthEnd }); }
+      try { return isWithinInterval(parseISO(c.created_at), { start: monthStart, end: monthEnd }); }
       catch { return false; }
     });
     const chargesMonth = monthCharts.reduce((s, c) => s + (Number(c.total_billed) || 0), 0);
@@ -165,7 +165,7 @@ export default function Reporting() {
       const start = startOfMonth(monthDate);
       const end = endOfMonth(monthDate);
       const count = charts.filter(c => {
-        try { return isWithinInterval(parseISO(c.created_date), { start, end }); }
+        try { return isWithinInterval(parseISO(c.created_at), { start, end }); }
         catch { return false; }
       }).length;
       return { month: format(monthDate, 'MMM yy'), count };

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 import ProfileSection from '@/components/settings/ProfileSection';
 import StaffSection from '@/components/settings/StaffSection';
@@ -24,7 +24,7 @@ export default function PracticeSettings() {
 
   useEffect(() => {
     (async () => {
-      const data = await base44.entities.Practice.list('-created_date', 1);
+      const data = await db.entities.Practice.list('-created_date', 1);
       setPractice(data?.[0] || null);
       setLoading(false);
     })();

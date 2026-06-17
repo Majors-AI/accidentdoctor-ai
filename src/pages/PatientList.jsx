@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 
 const STATUS_TAG = {
   referral_received: 'soft', intake_scheduled: 'gold', intake_complete: 'gold',
@@ -26,8 +26,8 @@ export default function PatientList() {
   useEffect(() => {
     (async () => {
       const [chartData, patientData] = await Promise.all([
-        base44.entities.PatientChart.list('-updated_date', 200),
-        base44.entities.Patient.list('-created_date', 200),
+        db.entities.PatientChart.list('-updated_date', 200),
+        db.entities.Patient.list('-created_date', 200),
       ]);
       const pMap = {};
       (patientData || []).forEach(p => { pMap[p.id] = p; });

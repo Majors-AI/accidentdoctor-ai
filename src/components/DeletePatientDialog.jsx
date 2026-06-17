@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 
 /**
  * Confirmation dialog for permanently deleting a patient + chart + appointments.
@@ -26,12 +26,12 @@ export default function DeletePatientDialog({ patient, chart, appointments, onSu
     try {
       // 1. Delete all appointments
       for (const appt of (appointments || [])) {
-        await base44.entities.Appointment.delete(appt.id);
+        await db.entities.Appointment.delete(appt.id);
       }
       // 2. Delete the chart
-      await base44.entities.PatientChart.delete(chart.id);
+      await db.entities.PatientChart.delete(chart.id);
       // 3. Delete the patient
-      await base44.entities.Patient.delete(patient.id);
+      await db.entities.Patient.delete(patient.id);
 
       onSuccess();
     } catch (err) {

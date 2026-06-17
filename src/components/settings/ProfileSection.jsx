@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 
 export default function ProfileSection({ practice, isAdmin, onSave }) {
   const [form, setForm] = useState({
@@ -19,7 +19,7 @@ export default function ProfileSection({ practice, isAdmin, onSave }) {
 
   async function handleSave() {
     setSaving(true);
-    await base44.entities.Practice.update(practice.id, form);
+    await db.entities.Practice.update(practice.id, form);
     setSaving(false);
     setSaved(true);
     onSave(form);

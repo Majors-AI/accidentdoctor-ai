@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 import DeletePatientDialog from '@/components/DeletePatientDialog';
 
@@ -33,13 +33,13 @@ export default function PatientDetail() {
     if (!id) return;
     (async () => {
       const [chartData, apptData] = await Promise.all([
-        base44.entities.PatientChart.filter({ id }),
-        base44.entities.Appointment.filter({ chart_id: id }, '-scheduled_at'),
+        db.entities.PatientChart.filter({ id }),
+        db.entities.Appointment.filter({ chart_id: id }, '-scheduled_at'),
       ]);
       const c = chartData?.[0] || null;
       setChart(c);
       if (c?.patient_id) {
-        const pts = await base44.entities.Patient.filter({ id: c.patient_id });
+        const pts = await db.entities.Patient.filter({ id: c.patient_id });
         setPatient(pts?.[0] || null);
       }
       setAppointments(apptData || []);
@@ -48,7 +48,7 @@ export default function PatientDetail() {
   }, [id]);
 
   async function updateStatus(status) {
-    await base44.entities.PatientChart.update(chart.id, { status });
+    await db.entities.PatientChart.update(chart.id, { status });
     setChart(c => ({ ...c, status }));
   }
 
@@ -133,7 +133,7 @@ export default function PatientDetail() {
             <KV label="Name" value={patient?.full_name || '—'} />
             <KV label="Phone" value={patient?.phone || '—'} />
             <KV label="Email" value={patient?.email || '—'} />
-            <KV label="DOB" value={patient?.date_of_birth || '—'} />
+            <KV label="DOB" value={patient?.dob || '—'} />
           </Card>
           <Card title="Chart info">
             <KV label="Status" value={(chart.status || '').replace(/_/g, ' ')} />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 
 const STATUS_TAG = { active: 'good', past_due: 'warn', suspended: 'bad', cancelled: 'soft' };
 
@@ -10,7 +10,7 @@ export default function PracticesAdmin() {
   const [saving, setSaving] = useState(false);
 
   async function load() {
-    const data = await base44.entities.Practice.list('-created_date', 100);
+    const data = await db.entities.Practice.list('-created_date', 100);
     setPractices(data || []);
   }
   useEffect(() => { load(); }, []);
@@ -18,7 +18,7 @@ export default function PracticesAdmin() {
   async function addPractice() {
     if (!f.name.trim()) return;
     setSaving(true);
-    await base44.entities.Practice.create({
+    await db.entities.Practice.create({
       name: f.name, specialty: f.specialty || null, city: f.city || null,
       state: f.state || null, marketing_source: f.marketing_source || null,
       allow_platform_metrics: f.allow_platform_metrics,

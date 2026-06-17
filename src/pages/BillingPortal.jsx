@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 
 const PAYER_BADGE = {
   pi_lien:         { label: 'PI Lien',       cls: 'gold' },
@@ -21,8 +21,8 @@ export default function BillingPortal() {
   useEffect(() => {
     (async () => {
       const [chartData, patientData] = await Promise.all([
-        base44.entities.PatientChart.list('-total_balance', 200),
-        base44.entities.Patient.list('-created_date', 200),
+        db.entities.PatientChart.list('-total_balance', 200),
+        db.entities.Patient.list('-created_date', 200),
       ]);
       const pMap = {};
       (patientData || []).forEach(p => { pMap[p.id] = p; });

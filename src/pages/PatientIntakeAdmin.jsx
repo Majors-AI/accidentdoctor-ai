@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 
 const PHI_OPTIONS = [
@@ -41,7 +42,7 @@ export default function PatientIntakeAdmin() {
   const [revoking, setRevoking] = useState({});
 
   useEffect(() => {
-    base44.entities.Practice.list().then(rows => {
+    db.entities.Practice.list().then(rows => {
       if (rows.length === 0) setPracticesFallback(true);
       else setPractices(rows);
     }).catch(() => setPracticesFallback(true));
