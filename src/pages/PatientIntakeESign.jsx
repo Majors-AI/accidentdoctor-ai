@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/lib/supabase';
 
 const BODY_PARTS = [
   'Head/Neck', 'Shoulder (L)', 'Shoulder (R)', 'Back (Upper)', 'Back (Lower)',
@@ -31,14 +31,19 @@ export default function PatientIntakeESign() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await base44.functions.invoke('getIntakeByToken', { token });
-        const data = res.data ?? {};
-
-        if (data.ok) {
-          setLinkData(data);
+        const { data, error } = await supabase.functions.invoke('get-intake-by-token', { body: { token } });
+        // not_found/expired/non-pending come back as 200 { ok:false, reason } in `data`.
+        // A real non-2xx (e.g. 500) lands in `error` → generic error screen.
+        if (error) {
+          setLoadState('error');
+          return;
+        }
+        const d = data ?? {};
+        if (d.ok) {
+          setLinkData(d);
           setLoadState('ok');
         } else {
-          setLoadState(data.reason ?? 'error');
+          setLoadState(d.reason ?? 'error');
         }
       } catch (err) {
         setLoadState('error');
@@ -64,12 +69,19 @@ export default function PatientIntakeESign() {
     if (!form.authorization_affirmed) return;
     setSubmitState('submitting');
     setSubmitError('');
-    const res = await base44.functions.invoke('submitIntake', { token, ...form });
-    const data = res.data;
-    if (data.ok) {
+    const { data, error } = await supabase.functions.invoke('submit-intake', { body: { token, ...form } });
+    if (error) {
+      // Non-2xx (400/410/etc.) — the function returns { error } in the response body.
+      let msg = 'Submission failed. Please try again.';
+      try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch {}
+      setSubmitError(msg);
+      setSubmitState('error');
+      return;
+    }
+    if (data?.ok) {
       setSubmitState('success');
     } else {
-      setSubmitError(data.error || 'Submission failed. Please try again.');
+      setSubmitError(data?.error || 'Submission failed. Please try again.');
       setSubmitState('error');
     }
   }

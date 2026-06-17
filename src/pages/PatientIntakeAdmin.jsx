@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/lib/supabase';
 import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 
@@ -94,14 +94,21 @@ export default function PatientIntakeAdmin() {
     }
     setSubmitting(true);
     setCreatedUrl('');
-    const res = await base44.functions.invoke('createIntakeLink', form);
+    const { data, error } = await supabase.functions.invoke('create-intake-link', { body: form });
     setSubmitting(false);
-    if (res.data?.ok) {
-      setCreatedUrl(`${window.location.origin}${res.data.url}`);
+    if (error) {
+      // Non-2xx — message is in the response body.
+      let msg = 'Failed to create link.';
+      try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch {}
+      setFormError(msg);
+      return;
+    }
+    if (data?.ok) {
+      setCreatedUrl(`${window.location.origin}${data.url}`);
       setForm(EMPTY_FORM);
       loadLinks();
     } else {
-      setFormError(res.data?.error || 'Failed to create link.');
+      setFormError(data?.error || 'Failed to create link.');
     }
   }
 
@@ -114,11 +121,17 @@ export default function PatientIntakeAdmin() {
   async function handleRevoke(auth) {
     const reason = window.prompt('Reason for revocation (optional):') ?? '';
     setRevoking(r => ({ ...r, [auth.id]: true }));
-    await base44.functions.invoke('revokePatientAuthorization', {
-      authorization_id: auth.id,
-      revoke_reason: reason,
+    const { error } = await supabase.functions.invoke('revoke-patient-authorization', {
+      body: { authorization_id: auth.id, revoke_reason: reason },
     });
     setRevoking(r => ({ ...r, [auth.id]: false }));
+    if (error) {
+      // Revoke had no inline error UI; surface the server message (lightweight, matches the prompt UX).
+      let msg = 'Failed to revoke authorization.';
+      try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch {}
+      window.alert(msg);
+      return;
+    }
     loadLinks();
   }
 
