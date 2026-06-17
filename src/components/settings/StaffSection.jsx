@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/lib/supabase';
 import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 
@@ -64,21 +64,23 @@ export default function StaffSection({ isAdmin }) {
     setSaving(s => ({ ...s, [userId]: true }));
     setErrors(e => ({ ...e, [userId]: null }));
 
-    const res = await base44.functions.invoke('updateStaffRole', { userId, newRole });
-    const body = res.data;
-
-    if (body?.ok) {
+    const { data, error } = await supabase.functions.invoke('update-staff-role', { body: { userId, newRole } });
+    if (error) {
+      // Non-2xx — the function returns { error } in the response body.
+      let msg = 'Failed to update role.';
+      try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch {}
+      setErrors(e => ({ ...e, [userId]: msg }));
+    } else if (data?.ok) {
       setUsers(us => us.map(u => u.id === userId ? { ...u, app_role: newRole } : u));
     } else {
-      setErrors(e => ({ ...e, [userId]: body?.error || 'Failed to update role.' }));
+      setErrors(e => ({ ...e, [userId]: data?.error || 'Failed to update role.' }));
     }
     setSaving(s => ({ ...s, [userId]: false }));
   }
 
-  async function deactivateUser(userId, userName) {
-    if (!window.confirm(`Remove "${userName}"'s app access? They will see the account-not-configured screen until a role is re-assigned.`)) return;
-    await callUpdateRole(userId, null);
-  }
+  // Deactivation is not supported yet: profiles.role is NOT NULL, so update-staff-role
+  // rejects newRole=null. The Deactivate control is rendered inert below.
+  // TODO: deactivation needs an account-status field on profiles (Dom decision).
 
   if (loading) {
     return <div style={{ color: '#525870', padding: 12 }}>Loading staff…</div>;
@@ -122,9 +124,7 @@ export default function StaffSection({ isAdmin }) {
         currentUserId={currentUser?.id}
         saving={saving}
         errors={errors}
-        onChangeRole={callUpdateRole}
-        onDeactivate={deactivateUser}
-      />
+        onChangeRole={callUpdateRole}      />
 
       {noRole.length > 0 && (
         <UserTable
@@ -144,7 +144,7 @@ export default function StaffSection({ isAdmin }) {
   );
 }
 
-function UserTable({ title, titleStyle, users, isAdmin, currentUserId, saving, errors, onChangeRole, onDeactivate, isNoRole }) {
+function UserTable({ title, titleStyle, users, isAdmin, currentUserId, saving, errors, onChangeRole, isNoRole }) {
   return (
     <div style={{ background: '#fff', border: '1px solid #e0e3ed', borderRadius: 14, overflow: 'hidden', marginBottom: 20, boxShadow: '0 1px 3px rgba(22,24,31,.07)' }}>
       <div style={{ padding: '11px 16px', borderBottom: '1px solid #e0e3ed', fontSize: 12, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', ...titleStyle }}>
@@ -189,15 +189,15 @@ function UserTable({ title, titleStyle, users, isAdmin, currentUserId, saving, e
                   : <span style={{ fontSize: 12, color: '#9ca0b8', fontWeight: 500 }}>No role</span>
               )}
 
-              {/* Deactivate */}
+              {/* Deactivate — inert until deactivation is supported (see TODO above). */}
               {isAdmin && !isSelf && !isNoRole && (
                 <button
-                  onClick={() => onDeactivate(u.id, u.full_name || u.email)}
-                  disabled={!!saving[u.id]}
-                  title="Remove app access"
-                  style={{ background: 'none', border: '1px solid #e0e3ed', borderRadius: 7, padding: '4px 10px', fontSize: 12, color: '#dc2626', cursor: 'pointer', fontWeight: 500, flexShrink: 0 }}
+                  type="button"
+                  disabled
+                  title="Deactivation not available yet"
+                  style={{ background: 'none', border: '1px solid #e0e3ed', borderRadius: 7, padding: '4px 10px', fontSize: 12, color: '#9ca0b8', cursor: 'not-allowed', fontWeight: 500, flexShrink: 0 }}
                 >
-                  {saving[u.id] ? '…' : 'Deactivate'}
+                  Deactivate
                 </button>
               )}
 
