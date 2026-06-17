@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { ReadOnlyBanner } from './ProfileSection';
 
 const SEED_FEE_SCHEDULE = [
@@ -20,6 +20,7 @@ export default function BillingSection({ practice, isAdmin, onSave }) {
   );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
 
   function setRow(i, field, value) {
     setRows(rs => rs.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
@@ -35,8 +36,15 @@ export default function BillingSection({ practice, isAdmin, onSave }) {
 
   async function handleSave() {
     setSaving(true);
+    setError('');
     const cleaned = rows.map(r => ({ ...r, charge: Number(r.charge) || 0 }));
-    await base44.entities.Practice.update(practice.id, { fee_schedule: cleaned });
+    try {
+      await db.entities.Practice.update(practice.id, { fee_schedule: cleaned });
+    } catch (err) {
+      setSaving(false);
+      setError(err?.message || 'Failed to save fee schedule.');
+      return;
+    }
     setSaving(false);
     setSaved(true);
     onSave({ fee_schedule: cleaned });
@@ -91,6 +99,7 @@ export default function BillingSection({ practice, isAdmin, onSave }) {
             {saving ? 'Saving…' : 'Save fee schedule'}
           </button>
           {saved && <span style={{ fontSize: 13, color: '#059669', fontWeight: 500 }}>✓ Saved</span>}
+          {error && <span style={{ fontSize: 13, color: '#dc2626', fontWeight: 500 }}>⚠️ {error}</span>}
         </div>
       )}
       {!isAdmin && <ReadOnlyBanner />}
