@@ -1,10 +1,10 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
-import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import PendingSetup from './pages/PendingSetup';
+import Login from './pages/Login';
 
 // Pages
 import PatientList from './pages/PatientList';
@@ -69,10 +69,9 @@ function JourneyRoutes({ profile }) {
 }
 
 const AuthenticatedApp = () => {
-  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin, user } = useAuth();
-  const loc = useLocation();
+  const { user, loading } = useAuth();
 
-  if (isLoadingPublicSettings || isLoadingAuth) {
+  if (loading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
@@ -80,12 +79,8 @@ const AuthenticatedApp = () => {
     );
   }
 
-  if (authError) {
-    if (authError.type === 'user_not_registered') return <UserNotRegisteredError />;
-    if (authError.type === 'auth_required') { navigateToLogin(); return null; }
-  }
-
-  if (!user) { navigateToLogin(); return null; }
+  // Unauthenticated → internal login route (replace → no redirect loop).
+  if (!user) return <Navigate to="/login" replace />;
 
   // profile reads BOTH fields: built-in `role` for platform admin, custom `app_role` for practice staff.
   const profile = { role: user.role ?? 'user', app_role: user.app_role };
@@ -140,6 +135,7 @@ function App() {
         <Router>
           <Routes>
             <Route path="/intake/:token" element={<PatientIntakeESign />} />
+            <Route path="/login" element={<Login />} />
             <Route path="/*" element={<AuthenticatedApp />} />
           </Routes>
           <Toaster />

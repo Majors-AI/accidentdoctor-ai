@@ -1,7 +1,5 @@
-import { useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
-import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 
 const DefaultFallback = () => (
   <div className="fixed inset-0 flex items-center justify-center">
@@ -9,29 +7,14 @@ const DefaultFallback = () => (
   </div>
 );
 
-export default function ProtectedRoute({ fallback = <DefaultFallback />, unauthenticatedElement }) {
-  const { isAuthenticated, isLoadingAuth, authChecked, authError, checkUserAuth } = useAuth();
+// Supabase-backed route gate. While the session is resolving, show a spinner;
+// once resolved, render the nested routes for an authenticated user, or send an
+// unauthenticated user to /login exactly once. `replace` keeps it out of history
+// and there is no ever-growing ?from_url query param (the old 431-loop cause).
+export default function ProtectedRoute({ fallback = <DefaultFallback /> }) {
+  const { user, loading } = useAuth();
 
-  useEffect(() => {
-    if (!authChecked && !isLoadingAuth) {
-      checkUserAuth();
-    }
-  }, [authChecked, isLoadingAuth, checkUserAuth]);
-
-  if (isLoadingAuth || !authChecked) {
-    return fallback;
-  }
-
-  if (authError) {
-    if (authError.type === 'user_not_registered') {
-      return <UserNotRegisteredError />;
-    }
-    return unauthenticatedElement;
-  }
-
-  if (!isAuthenticated) {
-    return unauthenticatedElement;
-  }
-
+  if (loading) return fallback;
+  if (!user) return <Navigate to="/login" replace />;
   return <Outlet />;
 }

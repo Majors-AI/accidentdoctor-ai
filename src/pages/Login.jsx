@@ -1,6 +1,7 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import React, { useState, useEffect } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,27 +10,37 @@ import AuthLayout from "@/components/AuthLayout";
 import GoogleIcon from "@/components/GoogleIcon";
 
 export default function Login() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Post-login destination: ?from=<encoded path>, decoded ONCE; default home.
+  const rawFrom = searchParams.get("from");
+  const dest = rawFrom ? decodeURIComponent(rawFrom) : "/";
+
+  // Leave the login page only once a session + profile are established.
+  // Navigating on `user` (not immediately after signIn) avoids racing the
+  // AuthContext profile fetch, and also redirects an already-signed-in visitor.
+  useEffect(() => {
+    if (user) navigate(dest, { replace: true });
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    try {
-      await base44.auth.loginViaEmailPassword(email, password);
-      window.location.href = "/";
-    } catch (err) {
-      setError(err.message || "Invalid email or password");
-    } finally {
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      setError(signInError.message || "Invalid email or password");
       setLoading(false);
     }
-  };
-
-  const handleGoogle = () => {
-    base44.auth.loginWithProvider("google", "/");
+    // On success the AuthContext picks up the session and the effect above
+    // navigates to `dest`; keep `loading` true to avoid a flash of the form.
   };
 
   return (
@@ -46,10 +57,12 @@ export default function Login() {
         </>
       }
     >
+      {/* OAuth deferred to a later phase — inert for now. */}
       <Button
         variant="outline"
         className="w-full h-12 text-sm font-medium mb-6"
-        onClick={handleGoogle}
+        disabled
+        title="Coming soon"
       >
         <GoogleIcon className="w-5 h-5 mr-2" />
         Continue with Google
