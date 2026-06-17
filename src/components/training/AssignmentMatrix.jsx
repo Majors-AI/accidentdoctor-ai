@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
 import { db } from '@/api/entities';
 
 const TIMEOUT_MS = 8000;
+const PRACTICE_ROLES = ['front_desk', 'provider', 'billing_staff', 'practice_admin'];
 const STATUS_COLOR = {
   assigned:    { bg: '#f1f5f9', color: '#64748b' },
   in_progress: { bg: '#fef9c3', color: '#b45309' },
@@ -26,21 +26,38 @@ export default function AssignmentMatrix() {
     }, TIMEOUT_MS);
 
     (async () => {
-      const [modsRes, matrixRes] = await Promise.all([
-        db.entities.TrainingModule.list(),
-        base44.functions.invoke('listStaffTrainingMatrix', {}),
-      ]);
-      clearTimeout(timer);
-      if (cancelled) return;
+      try {
+        // Assemble the matrix client-side (was the listStaffTrainingMatrix function).
+        // RLS scopes User.list() and TrainingAssignment.list() to the caller's practice.
+        const [mods, staffRows, assignRows] = await Promise.all([
+          db.entities.TrainingModule.list(),
+          db.entities.User.list(),
+          db.entities.TrainingAssignment.list(),
+        ]);
+        clearTimeout(timer);
+        if (cancelled) return;
 
-      if (!matrixRes.data?.ok) {
-        setError(matrixRes.data?.error || 'Failed to load staff matrix.');
+        // Other profiles expose `role`, not `app_role` — map role -> app_role here.
+        const staff = staffRows
+          .filter(u => PRACTICE_ROLES.includes(u.role))
+          .map(u => ({
+            id: u.id,
+            full_name: u.full_name || u.email || '—',
+            app_role: u.role,
+            assignments: assignRows
+              .filter(a => a.user_id === u.id)
+              .map(a => ({ module_id: a.module_id, status: a.status, assignment_id: a.id })),
+          }));
+
+        setModules(mods);
+        setStaff(staff);
         setLoading(false);
-        return;
+      } catch (err) {
+        clearTimeout(timer);
+        if (cancelled) return;
+        setError(err.message || 'Failed to load staff matrix.');
+        setLoading(false);
       }
-      setModules(modsRes);
-      setStaff(matrixRes.data.staff || []);
-      setLoading(false);
     })();
 
     return () => { cancelled = true; clearTimeout(timer); };
@@ -59,30 +76,18 @@ export default function AssignmentMatrix() {
 
     try {
       if (existing) {
-        // Remove assignment (delete via backend function)
-        const res = await base44.functions.invoke('deleteTrainingAssignment', {
-          assignment_id: existing.assignment_id,
-        });
-        if (!res.data?.ok) {
-          setRowErrors(e => ({ ...e, [key]: res.data?.error || 'Failed to unassign.' }));
-          setAssigning(s => ({ ...s, [key]: false }));
-          return;
-        }
+        // Remove assignment
+        await db.entities.TrainingAssignment.delete(existing.assignment_id);
         setStaff(ss => ss.map(m => m.id !== member.id ? m : {
           ...m, assignments: m.assignments.filter(a => a.module_id !== mod.id),
         }));
       } else {
-        // Create assignment via backend function
-        const res = await base44.functions.invoke('createTrainingAssignment', {
+        // Create assignment
+        const created = await db.entities.TrainingAssignment.create({
           user_id: member.id,
           module_id: mod.id,
+          status: 'assigned',
         });
-        if (!res.data?.ok) {
-          setRowErrors(e => ({ ...e, [key]: res.data?.error || 'Failed to assign.' }));
-          setAssigning(s => ({ ...s, [key]: false }));
-          return;
-        }
-        const created = res.data.assignment;
         setStaff(ss => ss.map(m => m.id !== member.id ? m : {
           ...m, assignments: [...m.assignments, { module_id: mod.id, status: 'assigned', assignment_id: created.id }],
         }));

@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
 import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 
@@ -10,6 +9,15 @@ const CAT_COLOR = {
 };
 const TIMEOUT_MS = 8000;
 const BLANK = { title: '', description: '', category: 'HIPAA', required: false, estimated_minutes: 30 };
+
+// Sample catalog inserted on first "Load sample modules" (was the seedTrainingModules function).
+const SEED_MODULES = [
+  { title: 'HIPAA Privacy & Security Fundamentals', description: 'Core HIPAA requirements for handling protected health information in a clinical setting.', category: 'HIPAA', required: true, estimated_minutes: 45 },
+  { title: 'New Staff Onboarding Overview', description: 'Introduction to practice systems, workflows, and team expectations.', category: 'Onboarding', required: true, estimated_minutes: 60 },
+  { title: 'Medical Billing & CPT Coding Basics', description: 'Overview of CPT codes, claims submission, and common billing errors to avoid.', category: 'Billing', required: false, estimated_minutes: 40 },
+  { title: "PI Lien & Workers' Comp Documentation", description: "Proper documentation practices for personal injury and workers' compensation cases.", category: 'Clinical', required: true, estimated_minutes: 35 },
+  { title: 'Patient Communication Standards', description: 'Best practices for professional communication with patients and legal representatives.', category: 'General', required: false, estimated_minutes: 20 },
+];
 
 export default function ModuleManager() {
   const { user } = useAuth();
@@ -62,11 +70,15 @@ export default function ModuleManager() {
 
   async function handleSeed() {
     setSeeding(true);
-    const res = await base44.functions.invoke('seedTrainingModules', {});
-    if (res.data?.ok) {
-      const fresh = await db.entities.TrainingModule.list();
-      setModules(fresh);
+    // Skip if a catalog already exists (preserves the "already seeded" UX).
+    const existing = await db.entities.TrainingModule.list();
+    if (existing.length === 0) {
+      for (const mod of SEED_MODULES) {
+        await db.entities.TrainingModule.create({ ...mod, practice_id: user.practice_id });
+      }
     }
+    const fresh = await db.entities.TrainingModule.list();
+    setModules(fresh);
     setSeeding(false);
   }
 

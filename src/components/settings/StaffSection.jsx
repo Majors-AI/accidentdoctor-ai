@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 
 const APP_ROLES = ['front_desk', 'provider', 'billing_staff', 'practice_admin'];
@@ -38,15 +39,20 @@ export default function StaffSection({ isAdmin }) {
     }, LOAD_TIMEOUT_MS);
 
     (async () => {
-      const res = await base44.functions.invoke('listPracticeStaff', {});
-      clearTimeout(timer);
-      if (cancelled) return;
-
-      const body = res.data;
-      if (body?.ok) {
-        setUsers(body.staff || []);
-      } else {
-        setLoadError(body?.error || 'Failed to load staff list.');
+      try {
+        // RLS scopes User.list() to the caller's practice. Other profiles expose
+        // `role`, not `app_role` — map role -> app_role for the table.
+        const rows = await db.entities.User.list();
+        clearTimeout(timer);
+        if (cancelled) return;
+        const staff = rows
+          .filter(u => APP_ROLES.includes(u.role))
+          .map(u => ({ id: u.id, email: u.email, full_name: u.full_name, app_role: u.role }));
+        setUsers(staff);
+      } catch (err) {
+        clearTimeout(timer);
+        if (cancelled) return;
+        setLoadError(err.message || 'Failed to load staff list.');
       }
       setLoading(false);
     })();
