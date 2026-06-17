@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { useAuth } from '@/lib/AuthContext';
 
 
@@ -33,8 +33,8 @@ export default function StaffTrainingView() {
 
     (async () => {
       const [mods, assigns] = await Promise.all([
-        base44.entities.TrainingModule.list(),
-        base44.entities.TrainingAssignment.filter({ user_id: user.id }),
+        db.entities.TrainingModule.list(),
+        db.entities.TrainingAssignment.filter({ user_id: user.id }),
       ]);
       clearTimeout(timer);
       if (cancelled) return;
@@ -52,7 +52,7 @@ export default function StaffTrainingView() {
     setSaving(s => ({ ...s, [assignment.id]: true }));
     const updates = { status: next };
     if (next === 'completed') updates.completed_at = new Date().toISOString();
-    await base44.entities.TrainingAssignment.update(assignment.id, updates);
+    await db.entities.TrainingAssignment.update(assignment.id, updates);
     setAssignments(as => as.map(a => a.id === assignment.id ? { ...a, ...updates } : a));
     setSaving(s => ({ ...s, [assignment.id]: false }));
   }

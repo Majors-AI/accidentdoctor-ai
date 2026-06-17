@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 import { ReadOnlyBanner } from './ProfileSection';
 
 const WEEKDAYS = [
@@ -34,7 +34,7 @@ export default function SchedulingSection({ practice, isAdmin, onSave }) {
 
   async function handleSave() {
     setSaving(true);
-    await base44.entities.Practice.update(practice.id, {
+    await db.entities.Practice.update(practice.id, {
       appt_duration_default: Number(duration),
       practice_hours: hours,
     });

@@ -54,11 +54,11 @@ export default function PatientIntakeAdmin() {
 
   async function loadLinks() {
     setLinksLoading(true);
-    const rows = await base44.entities.IntakeLink.list('-created_date');
+    const rows = await db.entities.IntakeLink.list('-created_date');
     // Pre-fetch authorizations for all links
     const authMap = {};
     await Promise.all(rows.map(async (row) => {
-      const auths = await base44.entities.PatientAuthorization.filter({ link_id: row.id });
+      const auths = await db.entities.PatientAuthorization.filter({ link_id: row.id });
       authMap[row.id] = auths[0] ?? null;
     }));
     setLinks(rows);
@@ -107,7 +107,7 @@ export default function PatientIntakeAdmin() {
 
   async function handleViewIntake(linkId) {
     setRowState(prev => ({ ...prev, [linkId]: { ...prev[linkId], intakeLoading: true, expanded: true } }));
-    const intakes = await base44.entities.PatientIntake.filter({ link_id: linkId });
+    const intakes = await db.entities.PatientIntake.filter({ link_id: linkId });
     setRowState(prev => ({ ...prev, [linkId]: { ...prev[linkId], intake: intakes[0] ?? null, intakeLoading: false } }));
   }
 

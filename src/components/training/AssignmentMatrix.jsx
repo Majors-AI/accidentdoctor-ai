@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
 
 const TIMEOUT_MS = 8000;
 const STATUS_COLOR = {
@@ -26,7 +27,7 @@ export default function AssignmentMatrix() {
 
     (async () => {
       const [modsRes, matrixRes] = await Promise.all([
-        base44.entities.TrainingModule.list(),
+        db.entities.TrainingModule.list(),
         base44.functions.invoke('listStaffTrainingMatrix', {}),
       ]);
       clearTimeout(timer);

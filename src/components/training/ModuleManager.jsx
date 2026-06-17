@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
+import { useAuth } from '@/lib/AuthContext';
 
 const CATEGORIES = ['HIPAA', 'Onboarding', 'Billing', 'Clinical', 'General'];
 const CAT_COLOR = {
@@ -10,6 +12,7 @@ const TIMEOUT_MS = 8000;
 const BLANK = { title: '', description: '', category: 'HIPAA', required: false, estimated_minutes: 30 };
 
 export default function ModuleManager() {
+  const { user } = useAuth();
   const [modules, setModules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -25,7 +28,7 @@ export default function ModuleManager() {
     }, TIMEOUT_MS);
 
     (async () => {
-      const mods = await base44.entities.TrainingModule.list();
+      const mods = await db.entities.TrainingModule.list();
       clearTimeout(timer);
       if (cancelled) return;
       setModules(mods);
@@ -45,10 +48,12 @@ export default function ModuleManager() {
     setSaving(true);
     const payload = { ...form, estimated_minutes: Number(form.estimated_minutes) || 0 };
     if (editing === 'new') {
-      const created = await base44.entities.TrainingModule.create(payload);
+      // practice_id is required by the multi-tenant training_modules table + its
+      // RLS write check (practice_id = my_practice_id()); supply the caller's practice.
+      const created = await db.entities.TrainingModule.create({ ...payload, practice_id: user.practice_id });
       setModules(ms => [...ms, created]);
     } else {
-      await base44.entities.TrainingModule.update(editing.id, payload);
+      await db.entities.TrainingModule.update(editing.id, payload);
       setModules(ms => ms.map(m => m.id === editing.id ? { ...m, ...payload } : m));
     }
     setSaving(false);
@@ -59,7 +64,7 @@ export default function ModuleManager() {
     setSeeding(true);
     const res = await base44.functions.invoke('seedTrainingModules', {});
     if (res.data?.ok) {
-      const fresh = await base44.entities.TrainingModule.list();
+      const fresh = await db.entities.TrainingModule.list();
       setModules(fresh);
     }
     setSeeding(false);
@@ -67,7 +72,7 @@ export default function ModuleManager() {
 
   async function handleDelete(mod) {
     if (!window.confirm(`Delete module "${mod.title}"? This won't remove existing assignments.`)) return;
-    await base44.entities.TrainingModule.delete(mod.id);
+    await db.entities.TrainingModule.delete(mod.id);
     setModules(ms => ms.filter(m => m.id !== mod.id));
   }
 

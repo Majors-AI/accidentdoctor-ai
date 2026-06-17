@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { db } from '@/api/entities';
+import { useAuth } from '@/lib/AuthContext';
 
 const PAYER_OPTIONS = [
   { value: 'pi_lien',          label: 'PI Lien' },
@@ -49,6 +50,7 @@ const inputStyle = {
 
 export default function NewReferral() {
   const nav = useNavigate();
+  const { user } = useAuth();
   const [form, setForm] = useState(EMPTY);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
@@ -79,11 +81,12 @@ export default function NewReferral() {
     setSaving(true);
     let patient;
     try {
-      patient = await base44.entities.Patient.create({
+      patient = await db.entities.Patient.create({
+        practice_id:   user.practice_id,   // required by patients RLS write check
         full_name:     form.full_name.trim(),
         phone:         form.phone.trim(),
         email:         form.email.trim() || undefined,
-        date_of_birth: form.date_of_birth || undefined,
+        dob:           form.date_of_birth || undefined,   // column is `dob`, not date_of_birth
       });
     } catch (err) {
       setSaving(false);
@@ -98,7 +101,8 @@ export default function NewReferral() {
         : `Referral source: ${form.referral_source}`;
       const notesBody = [referralNote, form.notes.trim()].filter(Boolean).join('\n\n');
 
-      chart = await base44.entities.PatientChart.create({
+      chart = await db.entities.PatientChart.create({
+        practice_id:    user.practice_id,   // required by patient_charts RLS write check
         patient_id:     patient.id,
         status:         'referral_received',
         payer_type:     form.payer_type,
