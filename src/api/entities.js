@@ -12,6 +12,7 @@ const TABLES = {
   PatientAuthorization: 'patient_authorizations',
   TrainingModule: 'training_modules',
   TrainingAssignment: 'training_assignments',
+  Document: 'documents',
 };
 // base44 built-in field names -> Supabase columns
 const FIELD_ALIASES = { created_date: 'created_at', updated_date: 'updated_at' };
